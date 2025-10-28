@@ -5,6 +5,7 @@
 快速创建、打开、关闭比特浏览器窗口
 
 功能：
+    - https://doc2.bitbrowser.cn/jiekou.html
     - 创建浏览器窗口（使用随机指纹）
     - 打开浏览器窗口并获取WebSocket地址
     - 关闭浏览器窗口
@@ -32,21 +33,34 @@ BIT_BASE_URL = "http://127.0.0.1:54345"
 
 def create_browser_window(name, platform="https://www.google.com", **kwargs):
     """创建比特浏览器窗口
-    
+
     Args:
         name (str): 窗口名称
         platform (str): 平台URL，默认为Google
         **kwargs: 其他可选参数
             - remark (str): 备注
             - url (str): 额外打开的URL
-            - proxyType (str): 代理类型，默认'noproxy'
-    
+            - proxyType (str): 代理类型，可选值: 'noproxy', 'http', 'https', 'socks5'
+            - host (str): 代理主机地址
+            - port (int): 代理端口
+            - proxyUserName (str): 代理用户名（如果需要认证）
+            - proxyPassword (str): 代理密码（如果需要认证）
+
     Returns:
         str: 创建成功返回浏览器窗口ID，失败返回None
-    
+
     Example:
+        >>> # 不使用代理
         >>> browser_id = create_browser_window("测试窗口", "https://www.facebook.com")
-        >>> print(f"窗口ID: {browser_id}")
+        >>>
+        >>> # 使用SOCKS5代理
+        >>> browser_id = create_browser_window(
+        >>>     name="测试窗口",
+        >>>     platform="https://www.facebook.com",
+        >>>     proxyType="socks5",
+        >>>     host="127.0.0.1",
+        >>>     port=7890
+        >>> )
     """
     print(f"🔨 正在创建窗口: {name}")
     
@@ -58,8 +72,18 @@ def create_browser_window(name, platform="https://www.google.com", **kwargs):
         "proxyMethod": 2,  # 2表示自定义代理
         "proxyType": kwargs.get("proxyType", "noproxy"),
     }
-    
-    # 添加可选参数
+
+    # 添加代理配置
+    if "host" in kwargs:
+        data["host"] = kwargs["host"]
+    if "port" in kwargs:
+        data["port"] = kwargs["port"]
+    if "proxyUserName" in kwargs:
+        data["proxyUserName"] = kwargs["proxyUserName"]
+    if "proxyPassword" in kwargs:
+        data["proxyPassword"] = kwargs["proxyPassword"]
+
+    # 添加其他可选参数
     if "remark" in kwargs:
         data["remark"] = kwargs["remark"]
     if "url" in kwargs:
@@ -195,11 +219,14 @@ def main():
     print("比特浏览器窗口创建脚本 v1.0")
     print("=" * 70)
     
-    # 1. 创建窗口
+    # 1. 创建窗口（使用SOCKS5代理）
     browser_id = create_browser_window(
         name="Augment注册",
         platform="https://mail.chatgpt.org.uk/",
-        remark="Augment注册"
+        remark="Augment注册",
+        proxyType="socks5",
+        host="127.0.0.1",
+        port=7890
     )
     
     if not browser_id:
