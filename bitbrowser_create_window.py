@@ -25,10 +25,12 @@
 import json
 import time
 import random
+import re
 import websocket
 from datetime import datetime
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
+from urllib.parse import quote
 
 
 # 比特浏览器本地API地址
@@ -605,6 +607,97 @@ def click_cloudflare_verify(cdp, session_id):
     return True
 
 
+def get_verification_code_from_email(email):
+    """从临时邮箱API获取验证码
+
+    Args:
+        email: 邮箱地址
+
+    Returns:
+        str: 验证码，失败返回None
+    """
+    print(f"\n📧 正在从邮箱获取验证码...")
+    print(f"   📮 邮箱地址: {email}")
+
+    # URL编码邮箱地址
+    encoded_email = quote(email)
+    api_url = f"https://mail.chatgpt.org.uk/api/get-emails?email={encoded_email}"
+
+    print(f"   🔗 API地址: {api_url}")
+
+    # 最多尝试10次，每次间隔3秒
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
+
+            # 发送HTTP请求
+            req = Request(api_url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+
+            response = urlopen(req, timeout=10)
+            data = json.loads(response.read().decode('utf-8'))
+
+            # 检查是否有邮件
+            if not data.get('emails'):
+                print(f"   ⏳ 暂无邮件，等待3秒后重试...")
+                human_delay(3.0)
+                continue
+
+            emails = data['emails']
+            print(f"   ✓ 找到 {len(emails)} 封邮件")
+
+            # 查找来自 support@augmentcode.com 的邮件
+            for email_data in emails:
+                from_addr = email_data.get('from', '')
+                subject = email_data.get('subject', '')
+                content = email_data.get('content', '')
+
+                print(f"   📧 邮件: {from_addr} - {subject}")
+
+                if 'augmentcode.com' in from_addr.lower():
+                    print(f"   ✓ 找到Augment邮件")
+
+                    # 从内容中提取验证码
+                    # 匹配格式: "Your verification code is: 529891"
+                    patterns = [
+                        r'verification code is:\s*(\d{6})',
+                        r'verification code is:\s*<b>(\d{6})</b>',
+                        r'code is:\s*(\d{6})',
+                        r'code:\s*(\d{6})',
+                        r'(\d{6})',  # 最后尝试匹配任意6位数字
+                    ]
+
+                    for pattern in patterns:
+                        match = re.search(pattern, content, re.IGNORECASE)
+                        if match:
+                            code = match.group(1)
+                            print(f"   ✓ 找到验证码: {code}")
+                            return code
+
+                    print(f"   ⚠️  未能从邮件内容中提取验证码")
+                    print(f"   📄 邮件内容预览: {content[:200]}...")
+
+            print(f"   ⚠️  未找到Augment邮件，等待3秒后重试...")
+            human_delay(3.0)
+
+        except HTTPError as e:
+            print(f"   ✗ HTTP错误: {e.code} {e.reason}")
+            if attempt < max_retries - 1:
+                human_delay(3.0)
+        except URLError as e:
+            print(f"   ✗ 网络错误: {e.reason}")
+            if attempt < max_retries - 1:
+                human_delay(3.0)
+        except Exception as e:
+            print(f"   ✗ 错误: {e}")
+            if attempt < max_retries - 1:
+                human_delay(3.0)
+
+    print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
+    return None
+
+
 def click_continue_button(cdp, session_id):
     """点击Continue按钮
 
@@ -1058,6 +1151,129 @@ def switch_to_augment_and_signin(ws_url, email):
         cdp.close()
 
 
+def fill_verification_code(ws_url, email):
+    """获取验证码并填写
+
+    Args:
+        ws_url (str): WebSocket地址
+        email (str): 邮箱地址
+
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print(f"\n🔐 正在获取并填写验证码...")
+
+    # 1. 获取验证码
+    verification_code = get_verification_code_from_email(email)
+
+    if not verification_code:
+        print("   ✗ 未能获取验证码")
+        return False
+
+    print(f"   ✓ 验证码: {verification_code}")
+
+    # 2. 连接到浏览器
+    cdp = CDPClient(ws_url)
+
+    try:
+        # 3. 获取Augment页面
+        print("   🔍 查找Augment页面...")
+        result = cdp.send("Target.getTargets", {})
+        if not result or "result" not in result:
+            print("   ✗ 无法获取 targets")
+            return False
+
+        targets = result["result"]["targetInfos"]
+
+        # 根据URL查找Augment页面
+        augment_target = None
+        for target in targets:
+            if target.get("type") == "page":
+                url = target.get("url", "")
+                if "augmentcode.com" in url:
+                    augment_target = target
+                    print(f"   ✓ 找到Augment页面: {url}")
+                    break
+
+        if not augment_target:
+            print("   ✗ 未找到Augment页面")
+            return False
+
+        target_id = augment_target["targetId"]
+
+        # 4. 激活页面
+        print("   🎯 激活Augment页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        human_delay(1.0)
+
+        # 5. 附加到 target
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": target_id,
+            "flatten": True
+        })
+
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到 target")
+            return False
+
+        session_id = result["result"]["sessionId"]
+
+        # 6. 启用必要的域
+        cdp.send("Runtime.enable", {}, session_id=session_id)
+        cdp.send("DOM.enable", {}, session_id=session_id)
+
+        # 7. 查找并填写验证码输入框
+        print("   ✍️  填写验证码...")
+
+        # 尝试多种选择器
+        selectors = [
+            'input[type="text"]',
+            'input[type="number"]',
+            'input[name*="code"]',
+            'input[name*="verification"]',
+            'input[placeholder*="code"]',
+            'input[placeholder*="verification"]',
+            'input[id*="code"]',
+            'input[id*="verification"]',
+        ]
+
+        filled = False
+        for selector in selectors:
+            result = cdp.send("Runtime.evaluate", {
+                "expression": f"""
+                    (() => {{
+                        const input = document.querySelector('{selector}');
+                        if (input) {{
+                            input.value = '{verification_code}';
+                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            return true;
+                        }}
+                        return false;
+                    }})()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                success = result["result"]["result"].get("value")
+                if success:
+                    print(f"   ✓ 成功填写验证码: {verification_code}")
+                    filled = True
+                    break
+
+        if not filled:
+            print("   ⚠️  未找到验证码输入框")
+            print("   💡 提示: 请手动填写验证码")
+            return False
+
+        print("   ✓ 验证码填写完成!")
+        return True
+
+    finally:
+        cdp.close()
+
+
 def main():
     """主函数 - 演示如何使用脚本"""
     print("=" * 70)
@@ -1109,11 +1325,20 @@ def main():
             print("\n✅ 已切换到Augment登录页面，点击Sign in并填写邮箱!")
         else:
             print("\n⚠️  自动操作失败，请手动完成剩余步骤")
+            email = None  # 标记失败，跳过后续步骤
 
-    # 6. 等待用户操作（可选）
+    # 6. 获取验证码并填写
+    if email:
+        code_success = fill_verification_code(ws_url, email)
+        if code_success:
+            print("\n✅ 验证码已自动填写!")
+        else:
+            print("\n⚠️  验证码填写失败，请手动完成")
+
+    # 7. 等待用户操作（可选）
     input("\n按回车键关闭窗口...")
 
-    # 7. 关闭窗口
+    # 8. 关闭窗口
     close_browser_window(browser_id)
 
     print("\n✨ 所有操作完成！")
