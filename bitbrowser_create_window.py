@@ -398,6 +398,7 @@ def main():
     browser_id = create_browser_window(
         name="Augment注册",
         platform="https://mail.chatgpt.org.uk/",
+        url="https://login.augmentcode.com/",
         remark="Augment注册",
         proxyType="socks5",
         host="127.0.0.1",
