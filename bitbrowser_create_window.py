@@ -1268,6 +1268,20 @@ def fill_verification_code(ws_url, email):
             return False
 
         print("   ✓ 验证码填写完成!")
+
+        # 8. 等待一下，然后点击Continue按钮
+        print("   ⏳ 等待页面更新...")
+        human_delay(2.0)
+
+        print("   ➡️  点击Continue按钮...")
+        continue_success = click_continue_button(cdp, session_id)
+        if continue_success:
+            print("   ✓ Continue按钮已点击")
+        else:
+            print("   ⚠️  未找到Continue按钮")
+            print("   💡 提示: 可能需要手动点击Continue")
+
+        print("   ✓ 所有操作完成!")
         return True
 
     finally:
