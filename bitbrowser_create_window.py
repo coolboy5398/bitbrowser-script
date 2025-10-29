@@ -266,30 +266,49 @@ def get_email_from_browser(ws_url):
     cdp = CDPClient(ws_url)
 
     try:
-        # 等待页面加载
-        print("   ⏳ 等待页面加载...")
-        time.sleep(3)
-
-        # 获取当前活动的 page
+        # 步骤1: 获取所有 targets
+        print("   📋 步骤1: 查找邮箱页面...")
         result = cdp.send("Target.getTargets", {})
         if not result or "result" not in result:
             print("   ✗ 无法获取 targets")
             return None
 
         targets = result["result"]["targetInfos"]
+
+        # 根据URL查找邮箱页面
         page_target = None
         for target in targets:
             if target.get("type") == "page":
-                page_target = target
-                break
+                url = target.get("url", "")
+                print(f"   📄 发现页面: {url}")
+                if "mail.chatgpt.org.uk" in url:
+                    page_target = target
+                    print(f"   ✓ 找到邮箱页面!")
+                    break
+
+        # 如果没找到邮箱页面，使用第一个page
+        if not page_target:
+            print("   ⚠️  未找到邮箱页面URL，尝试使用第一个page...")
+            for target in targets:
+                if target.get("type") == "page":
+                    page_target = target
+                    break
 
         if not page_target:
-            print("   ✗ 未找到 page target")
+            print("   ✗ 未找到任何 page target")
             return None
 
         target_id = page_target["targetId"]
+        print(f"   ✓ 目标页面ID: {target_id}")
 
-        # 附加到 target
+        # 步骤2: 激活目标页面
+        print("   🎯 步骤2: 激活邮箱页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        time.sleep(1)  # 等待激活完成
+        print("   ✓ 页面已激活")
+
+        # 步骤3: 附加到 target
+        print("   🔗 步骤3: 连接到页面...")
         result = cdp.send("Target.attachToTarget", {
             "targetId": target_id,
             "flatten": True
@@ -300,45 +319,84 @@ def get_email_from_browser(ws_url):
             return None
 
         session_id = result["result"]["sessionId"]
+        print("   ✓ 连接成功")
 
-        # 启用必要的域
+        # 步骤4: 启用必要的域并等待页面加载
+        print("   ⏳ 步骤4: 等待页面加载...")
+        cdp.send("Page.enable", {}, session_id=session_id)
         cdp.send("DOM.enable", {}, session_id=session_id)
         cdp.send("Runtime.enable", {}, session_id=session_id)
 
-        # 使用JavaScript获取邮箱地址
-        result = cdp.send("Runtime.evaluate", {
-            "expression": """
-                (() => {
-                    // 查找所有包含@的文本节点
-                    const walker = document.createTreeWalker(
-                        document.body,
-                        NodeFilter.SHOW_TEXT,
-                        null,
-                        false
-                    );
+        # 等待页面加载完成
+        time.sleep(3)
+        print("   ✓ 页面加载完成")
 
-                    let node;
-                    while(node = walker.nextNode()) {
-                        const text = node.textContent.trim();
-                        if (text.includes('@') && (text.includes('chatgptuk.pp.ua') || text.includes('chatgpt.org.uk'))) {
-                            // 使用正则提取邮箱
-                            const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                            if (match) {
-                                return match[0];
+        # 步骤5: 多次尝试获取邮箱地址
+        print("   🔍 步骤5: 查找邮箱地址...")
+        max_retries = 3
+        for attempt in range(max_retries):
+            if attempt > 0:
+                print(f"   🔄 第 {attempt + 1} 次尝试...")
+                time.sleep(2)
+
+            # 方法1: 使用JavaScript查找
+            result = cdp.send("Runtime.evaluate", {
+                "expression": """
+                    (() => {
+                        // 方法1: 查找所有包含@的文本节点
+                        const walker = document.createTreeWalker(
+                            document.body,
+                            NodeFilter.SHOW_TEXT,
+                            null,
+                            false
+                        );
+
+                        let node;
+                        while(node = walker.nextNode()) {
+                            const text = node.textContent.trim();
+                            if (text.includes('@') && (text.includes('chatgptuk.pp.ua') || text.includes('chatgpt.org.uk'))) {
+                                // 使用正则提取邮箱
+                                const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
+                                if (match) {
+                                    return match[0];
+                                }
                             }
                         }
-                    }
-                    return null;
-                })()
-            """,
-            "returnByValue": True
-        }, session_id=session_id)
 
-        if result and "result" in result and "result" in result["result"]:
-            email = result["result"]["result"].get("value")
-            if email:
-                print(f"   ✓ 找到邮箱地址: {email}")
-                return email
+                        // 方法2: 查找特定的元素
+                        const selectors = [
+                            'input[type="text"]',
+                            'input[readonly]',
+                            'div[class*="email"]',
+                            'span[class*="email"]',
+                            'p',
+                            'div'
+                        ];
+
+                        for (const selector of selectors) {
+                            const elements = document.querySelectorAll(selector);
+                            for (const el of elements) {
+                                const text = el.textContent || el.value || '';
+                                if (text.includes('@') && (text.includes('chatgptuk.pp.ua') || text.includes('chatgpt.org.uk'))) {
+                                    const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
+                                    if (match) {
+                                        return match[0];
+                                    }
+                                }
+                            }
+                        }
+
+                        return null;
+                    })()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                email = result["result"]["result"].get("value")
+                if email:
+                    print(f"   ✓ 找到邮箱地址: {email}")
+                    return email
 
         print("   ✗ 未找到邮箱地址")
         return None
