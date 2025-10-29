@@ -1244,6 +1244,183 @@ def wait_for_onboard_redirect(ws_url, max_wait_seconds=60):
         cdp.close()
 
 
+def get_payment_method_link(ws_url):
+    """从onboard页面获取Add Payment Method按钮的链接
+
+    Args:
+        ws_url (str): WebSocket地址
+
+    Returns:
+        str: 支付方法链接，失败返回None
+    """
+    print(f"\n🔍 查找Add Payment Method按钮链接...")
+
+    cdp = CDPClient(ws_url)
+
+    try:
+        # 1. 获取所有页面
+        print("   📄 步骤1: 获取所有页面...")
+        result = cdp.send("Target.getTargets", {})
+        if not result or "result" not in result:
+            print("   ✗ 无法获取页面列表")
+            return None
+
+        targets = result["result"]["targetInfos"]
+
+        # 2. 查找onboard页面
+        print("   🔍 步骤2: 查找onboard页面...")
+        onboard_target_id = None
+        for target in targets:
+            if target.get("type") == "page":
+                url = target.get("url", "")
+                if "app.augmentcode.com/onboard" in url:
+                    onboard_target_id = target.get("targetId")
+                    print(f"   ✓ 找到onboard页面: {url}")
+                    break
+
+        if not onboard_target_id:
+            print("   ✗ 未找到onboard页面")
+            return None
+
+        # 3. 激活onboard页面
+        print("   🎯 步骤3: 激活onboard页面...")
+        cdp.send("Target.activateTarget", {"targetId": onboard_target_id})
+        human_delay(1.0)
+
+        # 4. 附加到页面
+        print("   🔗 步骤4: 附加到onboard页面...")
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": onboard_target_id,
+            "flatten": True
+        })
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到页面")
+            return None
+
+        session_id = result["result"]["sessionId"]
+        print(f"   ✓ 已附加到页面 (sessionId: {session_id})")
+
+        # 5. 启用必要的域
+        print("   ⚙️  步骤5: 启用DOM和Runtime域...")
+        cdp.send("DOM.enable", {}, session_id=session_id)
+        cdp.send("Runtime.enable", {}, session_id=session_id)
+        cdp.send("Page.enable", {}, session_id=session_id)
+
+        # 等待页面完全加载
+        print("   ⏳ 等待页面加载...")
+        human_delay(3.0)
+
+        # 6. 使用JavaScript查找按钮并获取链接
+        print("   🔍 步骤6: 查找Add Payment Method按钮...")
+
+        # 尝试多种方式查找按钮
+        search_scripts = [
+            # 方法1: 查找包含"Add Payment Method"文本的button
+            """
+            (function() {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const btn = buttons.find(b => b.textContent.includes('Add Payment Method'));
+                if (btn) {
+                    // 尝试获取onclick事件或data属性中的链接
+                    const onclick = btn.getAttribute('onclick');
+                    if (onclick) return onclick;
+
+                    // 查找data-href或类似属性
+                    const dataHref = btn.getAttribute('data-href') || btn.getAttribute('data-url');
+                    if (dataHref) return dataHref;
+
+                    // 返回按钮的HTML以便分析
+                    return btn.outerHTML;
+                }
+                return null;
+            })()
+            """,
+            # 方法2: 查找包含"payment"的链接
+            """
+            (function() {
+                const links = Array.from(document.querySelectorAll('a[href*="payment"]'));
+                if (links.length > 0) {
+                    return links[0].href;
+                }
+                return null;
+            })()
+            """,
+            # 方法3: 查找所有按钮和链接，返回包含payment相关文本的
+            """
+            (function() {
+                const elements = Array.from(document.querySelectorAll('button, a'));
+                const paymentEl = elements.find(el =>
+                    el.textContent.toLowerCase().includes('payment') ||
+                    el.textContent.toLowerCase().includes('add payment')
+                );
+                if (paymentEl) {
+                    if (paymentEl.tagName === 'A') {
+                        return paymentEl.href;
+                    } else {
+                        // 按钮可能触发导航，尝试获取相关属性
+                        return paymentEl.outerHTML;
+                    }
+                }
+                return null;
+            })()
+            """
+        ]
+
+        payment_link = None
+        for i, script in enumerate(search_scripts, 1):
+            print(f"   🔍 尝试方法{i}...")
+            result = cdp.send("Runtime.evaluate", {
+                "expression": script,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                value = result["result"]["result"].get("value")
+                if value:
+                    print(f"   ✓ 方法{i}找到结果: {value[:100]}...")
+
+                    # 如果是完整的URL，直接返回
+                    if value.startswith('http'):
+                        payment_link = value
+                        break
+
+                    # 如果是HTML，尝试从中提取链接
+                    if '<button' in value or '<a' in value:
+                        # 尝试从HTML中提取href
+                        import re
+                        href_match = re.search(r'href=["\']([^"\']+)["\']', value)
+                        if href_match:
+                            payment_link = href_match.group(1)
+                            break
+
+                        # 尝试从onclick中提取URL
+                        onclick_match = re.search(r'window\.location\s*=\s*["\']([^"\']+)["\']', value)
+                        if onclick_match:
+                            payment_link = onclick_match.group(1)
+                            break
+
+                        # 保存HTML以便后续分析
+                        print(f"   💡 找到按钮HTML，但未找到直接链接")
+                        print(f"   📝 按钮HTML: {value}")
+
+        if payment_link:
+            print(f"   ✓ 成功获取支付方法链接!")
+            print(f"   🔗 链接: {payment_link}")
+            return payment_link
+        else:
+            print("   ✗ 未找到支付方法链接")
+            return None
+
+    except Exception as e:
+        print(f"   ✗ 获取支付方法链接时出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+    finally:
+        cdp.close()
+
+
 def get_session_cookie(ws_url):
     """获取session cookie
 
@@ -1542,7 +1719,26 @@ def main():
             print("   💡 提示: 可能需要手动完成验证或等待更长时间")
             email = None  # 标记失败，跳过后续步骤
 
-    # 8. 获取session cookie
+    # 8. 获取Add Payment Method按钮链接
+    if email:
+        payment_link = get_payment_method_link(ws_url)
+        if payment_link:
+            print(f"\n✅ 支付方法链接获取成功!")
+            print(f"   🔗 链接: {payment_link}")
+
+            # 保存链接到文件
+            link_filename = f"payment_link_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            try:
+                with open(link_filename, 'w', encoding='utf-8') as f:
+                    f.write(payment_link)
+                print(f"   💾 链接已保存到: {link_filename}")
+            except Exception as e:
+                print(f"   ⚠️  保存链接失败: {e}")
+        else:
+            print("\n⚠️  支付方法链接获取失败")
+            print("   💡 提示: 可能需要等待页面加载或手动查找")
+
+    # 9. 获取session cookie
     if email:
         session = get_session_cookie(ws_url)
         if session:
@@ -1561,10 +1757,10 @@ def main():
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
 
-    # 8. 等待用户操作（可选）
+    # 10. 等待用户操作（可选）
     input("\n按回车键关闭窗口...")
 
-    # 9. 关闭窗口
+    # 11. 关闭窗口
     close_browser_window(browser_id)
 
     print("\n✨ 所有操作完成！")
