@@ -35,6 +35,24 @@ from urllib.error import URLError, HTTPError
 BIT_BASE_URL = "http://127.0.0.1:54345"
 
 
+def human_delay(base_seconds, jitter_percent=0.3):
+    """模拟人类操作的延迟，添加随机抖动
+
+    Args:
+        base_seconds: 基础延迟时间（秒）
+        jitter_percent: 抖动百分比，默认30%
+
+    Returns:
+        实际延迟时间
+    """
+    jitter = base_seconds * jitter_percent
+    delay = base_seconds + random.uniform(-jitter, jitter)
+    # 确保延迟不小于0.1秒
+    delay = max(0.1, delay)
+    time.sleep(delay)
+    return delay
+
+
 class CDPClient:
     """简易 CDP 客户端"""
     def __init__(self, ws_url: str, timeout: float = 10.0):
@@ -305,7 +323,7 @@ def get_email_from_browser(ws_url):
         # 步骤2: 激活目标页面
         print("   🎯 步骤2: 激活邮箱页面...")
         cdp.send("Target.activateTarget", {"targetId": target_id})
-        time.sleep(1)  # 等待激活完成
+        human_delay(1.0)  # 等待激活完成（人类化延迟）
         print("   ✓ 页面已激活")
 
         # 步骤3: 附加到 target
@@ -328,8 +346,8 @@ def get_email_from_browser(ws_url):
         cdp.send("DOM.enable", {}, session_id=session_id)
         cdp.send("Runtime.enable", {}, session_id=session_id)
 
-        # 等待页面加载完成
-        time.sleep(3)
+        # 等待页面加载完成（人类化延迟）
+        human_delay(3.0)
         print("   ✓ 页面加载完成")
 
         # 步骤5: 多次尝试获取邮箱地址
@@ -338,7 +356,7 @@ def get_email_from_browser(ws_url):
         for attempt in range(max_retries):
             if attempt > 0:
                 print(f"   🔄 第 {attempt + 1} 次尝试...")
-                time.sleep(2)
+                human_delay(2.0)  # 重试间隔（人类化延迟）
 
             # 方法1: 使用JavaScript查找
             result = cdp.send("Runtime.evaluate", {
@@ -549,7 +567,7 @@ def click_cloudflare_verify(cdp, session_id):
 
     print(f"   ✓ 元素位置: x={x:.1f}, y={y:.1f}, 大小={width:.0f}x{height:.0f}")
 
-    # 3. 发送CDP鼠标点击事件
+    # 3. 发送CDP鼠标点击事件（模拟人类操作）
     print("   🖱️  发送CDP鼠标点击事件...")
 
     # 鼠标移动
@@ -559,6 +577,9 @@ def click_cloudflare_verify(cdp, session_id):
         "y": y
     }, session_id=session_id)
 
+    # 短暂延迟（模拟人类移动鼠标后的停顿）
+    human_delay(0.1, jitter_percent=0.5)
+
     # 鼠标按下
     cdp.send("Input.dispatchMouseEvent", {
         "type": "mousePressed",
@@ -567,6 +588,9 @@ def click_cloudflare_verify(cdp, session_id):
         "button": "left",
         "clickCount": 1
     }, session_id=session_id)
+
+    # 短暂延迟（模拟人类按下和释放之间的时间）
+    human_delay(0.05, jitter_percent=0.5)
 
     # 鼠标释放
     cdp.send("Input.dispatchMouseEvent", {
@@ -626,7 +650,7 @@ def switch_to_augment_and_signin(ws_url, email):
         # 步骤2: 激活Augment页面
         print("   🎯 步骤2: 激活Augment页面...")
         cdp.send("Target.activateTarget", {"targetId": target_id})
-        time.sleep(1)  # 等待激活完成
+        human_delay(1.0)  # 等待激活完成（人类化延迟）
         print("   ✓ 页面已激活")
 
         # 步骤3: 附加到 target
@@ -648,7 +672,7 @@ def switch_to_augment_and_signin(ws_url, email):
         cdp.send("Page.enable", {}, session_id=session_id)
         cdp.send("DOM.enable", {}, session_id=session_id)
         cdp.send("Runtime.enable", {}, session_id=session_id)
-        time.sleep(2)  # 等待页面加载
+        human_delay(2.0)  # 等待页面加载（人类化延迟）
         print("   ✓ 页面加载完成")
 
         # 步骤5: 查找并点击Sign in按钮
@@ -775,7 +799,7 @@ def switch_to_augment_and_signin(ws_url, email):
 
         # 步骤6: 等待页面跳转并填写work mail
         print("   ⏳ 步骤6: 等待页面跳转...")
-        time.sleep(3)  # 等待页面跳转
+        human_delay(3.0)  # 等待页面跳转（人类化延迟）
         print("   ✓ 页面跳转完成")
 
         # 步骤7: 查找并填写work mail输入框
@@ -883,14 +907,14 @@ def switch_to_augment_and_signin(ws_url, email):
         # 步骤8: 点击Cloudflare验证框
         print("   🛡️  步骤8: 处理Cloudflare验证...")
         print("   ⏳ 等待验证框加载...")
-        time.sleep(5)  # 等待验证框加载（增加到5秒）
+        human_delay(5.0, jitter_percent=0.2)  # 等待验证框加载（人类化延迟，5秒±20%）
 
         verify_success = click_cloudflare_verify(cdp, session_id)
         if verify_success:
             print("   ✓ Cloudflare验证框已点击")
             # 等待验证完成
             print("   ⏳ 等待验证完成...")
-            time.sleep(5)  # 等待验证完成（增加到5秒）
+            human_delay(5.0, jitter_percent=0.2)  # 等待验证完成（人类化延迟，5秒±20%）
         else:
             print("   ⚠️  未找到验证框或点击失败")
             print("   💡 提示: 验证框可能还未加载，或已经完成验证，或需要手动操作")
