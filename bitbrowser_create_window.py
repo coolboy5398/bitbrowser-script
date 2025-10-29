@@ -1016,8 +1016,8 @@ def switch_to_augment_and_signin(ws_url, email):
         human_delay(3.0)  # 等待页面跳转（人类化延迟）
         print("   ✓ 页面跳转完成")
 
-        # 步骤7: 查找并填写work mail输入框
-        print("   ✍️  步骤7: 填写work mail...")
+        # 步骤7: 等待并检测work mail输入框加载
+        print("   ⏳ 步骤7: 等待work mail输入框加载...")
 
         # 尝试多种选择器查找work mail输入框
         selectors = [
@@ -1032,6 +1032,44 @@ def switch_to_augment_and_signin(ws_url, email):
             'input[name="email"]',
             'input[type="text"]'
         ]
+
+        # 轮询检测输入框是否加载（最多等待10秒）
+        input_loaded = False
+        max_wait = 10
+        for attempt in range(max_wait):
+            for selector in selectors:
+                result = cdp.send("Runtime.evaluate", {
+                    "expression": f"""
+                        (() => {{
+                            const input = document.querySelector('{selector}');
+                            return input !== null;
+                        }})()
+                    """,
+                    "returnByValue": True
+                }, session_id=session_id)
+
+                if result and "result" in result and "result" in result["result"]:
+                    found = result["result"]["result"].get("value")
+                    if found:
+                        print(f"   ✓ 输入框已加载（用时{attempt + 1}秒）")
+                        input_loaded = True
+                        break
+
+            if input_loaded:
+                break
+
+            # 显示等待进度
+            if attempt < max_wait - 1:
+                print(f"   ⏳ 等待中... ({attempt + 1}秒)")
+                human_delay(1.0)
+
+        if not input_loaded:
+            print(f"   ⚠️  输入框未加载（已等待{max_wait}秒）")
+            print("   💡 提示: 可能需要手动填写邮箱地址")
+            return False
+
+        # 步骤8: 填写work mail输入框
+        print("   ✍️  步骤8: 填写work mail...")
 
         filled = False
         for selector in selectors:
@@ -1118,8 +1156,8 @@ def switch_to_augment_and_signin(ws_url, email):
             print("   💡 提示: 请手动填写邮箱地址")
             return False
 
-        # 步骤8: 点击Cloudflare验证框
-        print("   🛡️  步骤8: 处理Cloudflare验证...")
+        # 步骤9: 点击Cloudflare验证框
+        print("   🛡️  步骤9: 处理Cloudflare验证...")
         print("   ⏳ 等待验证框加载...")
         human_delay(5.0, jitter_percent=0.2)  # 等待验证框加载（人类化延迟，5秒±20%）
 
@@ -1133,8 +1171,8 @@ def switch_to_augment_and_signin(ws_url, email):
             print("   ⚠️  未找到验证框或点击失败")
             print("   💡 提示: 验证框可能还未加载，或已经完成验证，或需要手动操作")
 
-        # 步骤9: 点击Continue按钮
-        print("   ➡️  步骤9: 查找并点击Continue按钮...")
+        # 步骤10: 点击Continue按钮
+        print("   ➡️  步骤10: 查找并点击Continue按钮...")
         human_delay(2.0)  # 等待页面更新
 
         continue_success = click_continue_button(cdp, session_id)
@@ -1146,6 +1184,150 @@ def switch_to_augment_and_signin(ws_url, email):
 
         print("   ✓ 所有操作完成!")
         return True
+
+    finally:
+        cdp.close()
+
+
+def wait_for_onboard_redirect(ws_url, max_wait_seconds=60):
+    """等待login页面跳转到onboard页面
+
+    Args:
+        ws_url (str): WebSocket地址
+        max_wait_seconds (int): 最大等待时间（秒）
+
+    Returns:
+        bool: 成功跳转返回True，超时返回False
+    """
+    print(f"\n⏳ 等待页面从login跳转到onboard...")
+
+    cdp = CDPClient(ws_url)
+
+    try:
+        start_time = time.time()
+        last_url = ""
+
+        while time.time() - start_time < max_wait_seconds:
+            # 获取所有页面
+            result = cdp.send("Target.getTargets", {})
+            if not result or "result" not in result:
+                human_delay(1.0)
+                continue
+
+            targets = result["result"]["targetInfos"]
+
+            # 查找login或onboard页面
+            for target in targets:
+                if target.get("type") == "page":
+                    url = target.get("url", "")
+
+                    # 检查是否跳转到onboard
+                    if "app.augmentcode.com/onboard" in url:
+                        print(f"   ✓ 页面已跳转到: {url}")
+                        return True
+
+                    # 显示当前login页面URL（如果变化了）
+                    if "login.augmentcode.com" in url and url != last_url:
+                        print(f"   📍 当前页面: login.augmentcode.com/...")
+                        last_url = url
+
+            # 显示等待进度
+            elapsed = int(time.time() - start_time)
+            if elapsed % 5 == 0:  # 每5秒显示一次
+                print(f"   ⏳ 等待中... ({elapsed}秒)")
+            human_delay(2.0)
+
+        print(f"   ✗ 等待超时（{max_wait_seconds}秒）")
+        return False
+
+    finally:
+        cdp.close()
+
+
+def get_session_cookie(ws_url):
+    """获取session cookie
+
+    Args:
+        ws_url (str): WebSocket地址
+
+    Returns:
+        str: session值，失败返回None
+    """
+    print(f"\n🍪 正在获取session cookie...")
+
+    # 1. 连接到浏览器
+    cdp = CDPClient(ws_url)
+
+    try:
+        # 2. 创建新标签页打开auth页面
+        print("   📄 打开auth.augmentcode.com页面...")
+        result = cdp.send("Target.createTarget", {
+            "url": "https://auth.augmentcode.com"
+        })
+
+        if not result or "result" not in result:
+            print("   ✗ 无法创建新标签页")
+            return None
+
+        target_id = result["result"]["targetId"]
+        print(f"   ✓ 新标签页已创建")
+
+        # 等待页面加载
+        print("   ⏳ 等待页面加载...")
+        human_delay(3.0)
+
+        # 3. 激活页面
+        print("   🎯 激活auth页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        human_delay(1.0)
+
+        # 4. 附加到 target
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": target_id,
+            "flatten": True
+        })
+
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到 target")
+            return None
+
+        session_id = result["result"]["sessionId"]
+
+        # 5. 启用Network域以获取cookies
+        cdp.send("Network.enable", {}, session_id=session_id)
+
+        # 6. 获取所有cookies
+        print("   🍪 获取cookies...")
+        result = cdp.send("Network.getAllCookies", {}, session_id=session_id)
+
+        if not result or "result" not in result:
+            print("   ✗ 无法获取cookies")
+            return None
+
+        cookies = result["result"]["cookies"]
+        print(f"   📋 找到 {len(cookies)} 个cookies")
+
+        # 7. 查找session cookie
+        session_value = None
+        for cookie in cookies:
+            name = cookie.get("name", "")
+            domain = cookie.get("domain", "")
+            value = cookie.get("value", "")
+
+            print(f"   🍪 Cookie: {name} = {value[:20]}... (domain: {domain})")
+
+            if name.lower() == "session" and "augmentcode.com" in domain:
+                session_value = value
+                print(f"   ✓ 找到session cookie!")
+                print(f"   📝 Session值: {session_value}")
+                break
+
+        if not session_value:
+            print("   ⚠️  未找到session cookie")
+            print("   💡 提示: 可能需要等待登录完成")
+            return None
+
+        return session_value
 
     finally:
         cdp.close()
@@ -1348,11 +1530,41 @@ def main():
             print("\n✅ 验证码已自动填写!")
         else:
             print("\n⚠️  验证码填写失败，请手动完成")
+            email = None  # 标记失败，跳过后续步骤
 
-    # 7. 等待用户操作（可选）
+    # 7. 等待页面跳转到onboard
+    if email:
+        redirect_success = wait_for_onboard_redirect(ws_url, max_wait_seconds=60)
+        if redirect_success:
+            print("\n✅ 页面已成功跳转到onboard!")
+        else:
+            print("\n⚠️  页面未跳转到onboard")
+            print("   💡 提示: 可能需要手动完成验证或等待更长时间")
+            email = None  # 标记失败，跳过后续步骤
+
+    # 8. 获取session cookie
+    if email:
+        session = get_session_cookie(ws_url)
+        if session:
+            print(f"\n✅ Session cookie获取成功!")
+            print(f"   📝 Session值: {session}")
+
+            # 保存session到文件
+            session_filename = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            try:
+                with open(session_filename, 'w', encoding='utf-8') as f:
+                    f.write(session)
+                print(f"   💾 Session已保存到: {session_filename}")
+            except Exception as e:
+                print(f"   ⚠️  保存session失败: {e}")
+        else:
+            print("\n⚠️  Session cookie获取失败")
+            print("   💡 提示: 可能需要等待更长时间或手动获取")
+
+    # 8. 等待用户操作（可选）
     input("\n按回车键关闭窗口...")
 
-    # 8. 关闭窗口
+    # 9. 关闭窗口
     close_browser_window(browser_id)
 
     print("\n✨ 所有操作完成！")
