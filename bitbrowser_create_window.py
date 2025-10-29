@@ -605,6 +605,127 @@ def click_cloudflare_verify(cdp, session_id):
     return True
 
 
+def click_continue_button(cdp, session_id):
+    """点击Continue按钮
+
+    Args:
+        cdp: CDPClient实例
+        session_id: CDP会话ID
+
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print("   🔍 查找Continue按钮...")
+
+    # 方法1: JavaScript文本匹配点击
+    result = cdp.send("Runtime.evaluate", {
+        "expression": """
+            (() => {
+                // 查找所有可能的按钮元素
+                const elements = Array.from(document.querySelectorAll('button, a, input[type="submit"], input[type="button"]'));
+
+                for (const el of elements) {
+                    const text = (el.textContent || el.value || '').toLowerCase();
+                    const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+
+                    // 匹配 "continue" 或 "next"
+                    if (text.includes('continue') || text.includes('next') ||
+                        ariaLabel.includes('continue') || ariaLabel.includes('next')) {
+                        el.click();
+                        return true;
+                    }
+                }
+
+                return false;
+            })()
+        """,
+        "returnByValue": True
+    }, session_id=session_id)
+
+    if result and "result" in result and "result" in result["result"]:
+        success = result["result"]["result"].get("value")
+        if success:
+            print("   ✓ JavaScript点击Continue成功")
+            return True
+
+    # 方法2: 使用DOM API查找并点击
+    print("   🔍 尝试使用DOM API...")
+
+    result = cdp.send("DOM.getDocument", {"depth": -1}, session_id=session_id)
+    if not result or "result" not in result:
+        print("   ✗ 无法获取DOM文档")
+        return False
+
+    root_node_id = result["result"]["root"]["nodeId"]
+
+    # 查找所有button和a元素
+    result = cdp.send("DOM.querySelectorAll", {
+        "nodeId": root_node_id,
+        "selector": "button, a, input[type='submit'], input[type='button']"
+    }, session_id=session_id)
+
+    if not result or "result" not in result or not result["result"].get("nodeIds"):
+        print("   ✗ 未找到任何按钮元素")
+        return False
+
+    node_ids = result["result"]["nodeIds"]
+    print(f"   📋 找到 {len(node_ids)} 个可点击元素")
+
+    # 遍历所有元素，查找包含"continue"或"next"的
+    for node_id in node_ids:
+        # 获取元素的外部HTML
+        result = cdp.send("DOM.getOuterHTML", {"nodeId": node_id}, session_id=session_id)
+
+        if result and "result" in result:
+            html = result["result"].get("outerHTML", "").lower()
+            if "continue" in html or "next" in html:
+                print(f"   ✓ 找到Continue按钮")
+
+                # 获取元素位置并点击
+                box_result = cdp.send("DOM.getBoxModel", {"nodeId": node_id}, session_id=session_id)
+
+                if box_result and "result" in box_result:
+                    box_model = box_result["result"]["model"]
+                    content = box_model["content"]
+                    x = (content[0] + content[4]) / 2
+                    y = (content[1] + content[5]) / 2
+
+                    print(f"   📍 按钮位置: ({x:.1f}, {y:.1f})")
+
+                    # 发送点击事件（人类化）
+                    cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mouseMoved",
+                        "x": x,
+                        "y": y
+                    }, session_id=session_id)
+
+                    human_delay(0.1, jitter_percent=0.5)
+
+                    cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mousePressed",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 1
+                    }, session_id=session_id)
+
+                    human_delay(0.05, jitter_percent=0.5)
+
+                    cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased",
+                        "x": x,
+                        "y": y,
+                        "button": "left",
+                        "clickCount": 1
+                    }, session_id=session_id)
+
+                    print("   ✓ CDP点击Continue完成")
+                    return True
+
+    print("   ✗ 未找到Continue按钮")
+    return False
+
+
 def switch_to_augment_and_signin(ws_url, email):
     """切换到Augment登录页面，点击Sign in并填写邮箱
 
@@ -918,6 +1039,17 @@ def switch_to_augment_and_signin(ws_url, email):
         else:
             print("   ⚠️  未找到验证框或点击失败")
             print("   💡 提示: 验证框可能还未加载，或已经完成验证，或需要手动操作")
+
+        # 步骤9: 点击Continue按钮
+        print("   ➡️  步骤9: 查找并点击Continue按钮...")
+        human_delay(2.0)  # 等待页面更新
+
+        continue_success = click_continue_button(cdp, session_id)
+        if continue_success:
+            print("   ✓ Continue按钮已点击")
+        else:
+            print("   ⚠️  未找到Continue按钮")
+            print("   💡 提示: 可能需要手动点击Continue")
 
         print("   ✓ 所有操作完成!")
         return True
