@@ -446,6 +446,204 @@ def save_email_to_file(email):
         return None
 
 
+def switch_to_augment_and_signin(ws_url):
+    """切换到Augment登录页面并点击Sign in按钮
+
+    Args:
+        ws_url (str): WebSocket地址
+
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print(f"\n🔄 正在切换到Augment登录页面...")
+
+    cdp = CDPClient(ws_url)
+
+    try:
+        # 步骤1: 查找Augment登录页面
+        print("   📋 步骤1: 查找Augment登录页面...")
+        result = cdp.send("Target.getTargets", {})
+        if not result or "result" not in result:
+            print("   ✗ 无法获取 targets")
+            return False
+
+        targets = result["result"]["targetInfos"]
+
+        # 根据URL查找Augment页面
+        augment_target = None
+        for target in targets:
+            if target.get("type") == "page":
+                url = target.get("url", "")
+                print(f"   📄 发现页面: {url}")
+                if "login.augmentcode.com" in url or "augmentcode.com" in url:
+                    augment_target = target
+                    print(f"   ✓ 找到Augment登录页面!")
+                    break
+
+        if not augment_target:
+            print("   ✗ 未找到Augment登录页面")
+            return False
+
+        target_id = augment_target["targetId"]
+        print(f"   ✓ 目标页面ID: {target_id}")
+
+        # 步骤2: 激活Augment页面
+        print("   🎯 步骤2: 激活Augment页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        time.sleep(1)  # 等待激活完成
+        print("   ✓ 页面已激活")
+
+        # 步骤3: 附加到 target
+        print("   🔗 步骤3: 连接到页面...")
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": target_id,
+            "flatten": True
+        })
+
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到 target")
+            return False
+
+        session_id = result["result"]["sessionId"]
+        print("   ✓ 连接成功")
+
+        # 步骤4: 启用必要的域
+        print("   ⏳ 步骤4: 等待页面加载...")
+        cdp.send("Page.enable", {}, session_id=session_id)
+        cdp.send("DOM.enable", {}, session_id=session_id)
+        cdp.send("Runtime.enable", {}, session_id=session_id)
+        time.sleep(2)  # 等待页面加载
+        print("   ✓ 页面加载完成")
+
+        # 步骤5: 查找并点击Sign in按钮
+        print("   🖱️  步骤5: 查找Sign in按钮...")
+
+        # 尝试多种选择器
+        selectors = [
+            'button:contains("Sign in")',
+            'button:contains("sign in")',
+            'a:contains("Sign in")',
+            'a:contains("sign in")',
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button',
+            'a[href*="login"]',
+            'a[href*="signin"]'
+        ]
+
+        clicked = False
+        for selector in selectors:
+            # 使用JavaScript查找并点击按钮
+            result = cdp.send("Runtime.evaluate", {
+                "expression": f"""
+                    (() => {{
+                        // 方法1: 使用文本内容查找
+                        const buttons = Array.from(document.querySelectorAll('button, a, input[type="submit"]'));
+                        for (const btn of buttons) {{
+                            const text = btn.textContent || btn.value || '';
+                            if (text.toLowerCase().includes('sign in') || text.toLowerCase().includes('signin')) {{
+                                btn.click();
+                                return true;
+                            }}
+                        }}
+
+                        // 方法2: 查找特定选择器
+                        const element = document.querySelector('{selector}');
+                        if (element) {{
+                            element.click();
+                            return true;
+                        }}
+
+                        return false;
+                    }})()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                success = result["result"]["result"].get("value")
+                if success:
+                    print(f"   ✓ 成功点击Sign in按钮!")
+                    clicked = True
+                    break
+
+        if not clicked:
+            print("   ⚠️  未找到Sign in按钮，尝试使用DOM API...")
+
+            # 使用DOM API查找按钮
+            result = cdp.send("DOM.getDocument", {"depth": -1}, session_id=session_id)
+            if result and "result" in result:
+                root_node_id = result["result"]["root"]["nodeId"]
+
+                # 查找所有button元素
+                result = cdp.send("DOM.querySelectorAll", {
+                    "nodeId": root_node_id,
+                    "selector": "button, a, input[type='submit']"
+                }, session_id=session_id)
+
+                if result and "result" in result and result["result"].get("nodeIds"):
+                    node_ids = result["result"]["nodeIds"]
+                    print(f"   📋 找到 {len(node_ids)} 个可点击元素")
+
+                    # 遍历所有元素，查找包含"sign in"的
+                    for node_id in node_ids:
+                        # 获取元素的外部HTML
+                        result = cdp.send("DOM.getOuterHTML", {
+                            "nodeId": node_id
+                        }, session_id=session_id)
+
+                        if result and "result" in result:
+                            html = result["result"].get("outerHTML", "").lower()
+                            if "sign in" in html or "signin" in html:
+                                # 获取元素位置并点击
+                                box_result = cdp.send("DOM.getBoxModel", {
+                                    "nodeId": node_id
+                                }, session_id=session_id)
+
+                                if box_result and "result" in box_result:
+                                    box_model = box_result["result"]["model"]
+                                    content = box_model["content"]
+                                    x = (content[0] + content[4]) / 2
+                                    y = (content[1] + content[5]) / 2
+
+                                    # 发送点击事件
+                                    cdp.send("Input.dispatchMouseEvent", {
+                                        "type": "mouseMoved",
+                                        "x": x,
+                                        "y": y
+                                    }, session_id=session_id)
+
+                                    cdp.send("Input.dispatchMouseEvent", {
+                                        "type": "mousePressed",
+                                        "x": x,
+                                        "y": y,
+                                        "button": "left",
+                                        "clickCount": 1
+                                    }, session_id=session_id)
+
+                                    cdp.send("Input.dispatchMouseEvent", {
+                                        "type": "mouseReleased",
+                                        "x": x,
+                                        "y": y,
+                                        "button": "left",
+                                        "clickCount": 1
+                                    }, session_id=session_id)
+
+                                    print(f"   ✓ 成功点击Sign in按钮!")
+                                    clicked = True
+                                    break
+
+        if not clicked:
+            print("   ✗ 未能点击Sign in按钮")
+            return False
+
+        print("   ✓ 操作完成!")
+        return True
+
+    finally:
+        cdp.close()
+
+
 def main():
     """主函数 - 演示如何使用脚本"""
     print("=" * 70)
@@ -482,7 +680,7 @@ def main():
     if email:
         filename = save_email_to_file(email)
         if filename:
-            print(f"\n✅ 成功！")
+            print(f"\n✅ 邮箱获取成功！")
             print(f"   邮箱地址: {email}")
             print(f"   访问链接: https://mail.chatgpt.org.uk/{email}")
             print(f"   保存文件: {filename}")
@@ -490,10 +688,18 @@ def main():
         print("\n⚠️  未能自动获取邮箱地址")
         print("   提示: 请手动从浏览器窗口中复制邮箱地址")
 
-    # 5. 等待用户操作（可选）
+    # 5. 切换到Augment页面并点击Sign in
+    if email:
+        success = switch_to_augment_and_signin(ws_url)
+        if success:
+            print("\n✅ 已切换到Augment登录页面并点击Sign in!")
+        else:
+            print("\n⚠️  切换到Augment页面失败，请手动操作")
+
+    # 6. 等待用户操作（可选）
     input("\n按回车键关闭窗口...")
 
-    # 6. 关闭窗口
+    # 7. 关闭窗口
     close_browser_window(browser_id)
 
     print("\n✨ 所有操作完成！")
