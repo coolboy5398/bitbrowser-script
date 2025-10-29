@@ -446,11 +446,12 @@ def save_email_to_file(email):
         return None
 
 
-def switch_to_augment_and_signin(ws_url):
-    """切换到Augment登录页面并点击Sign in按钮
+def switch_to_augment_and_signin(ws_url, email):
+    """切换到Augment登录页面，点击Sign in并填写邮箱
 
     Args:
         ws_url (str): WebSocket地址
+        email (str): 要填写的邮箱地址
 
     Returns:
         bool: 成功返回True，失败返回False
@@ -637,7 +638,114 @@ def switch_to_augment_and_signin(ws_url):
             print("   ✗ 未能点击Sign in按钮")
             return False
 
-        print("   ✓ 操作完成!")
+        # 步骤6: 等待页面跳转并填写work mail
+        print("   ⏳ 步骤6: 等待页面跳转...")
+        time.sleep(3)  # 等待页面跳转
+        print("   ✓ 页面跳转完成")
+
+        # 步骤7: 查找并填写work mail输入框
+        print("   ✍️  步骤7: 填写work mail...")
+
+        # 尝试多种选择器查找work mail输入框
+        selectors = [
+            'input[name*="email"]',
+            'input[type="email"]',
+            'input[placeholder*="email"]',
+            'input[placeholder*="Email"]',
+            'input[placeholder*="work"]',
+            'input[placeholder*="Work"]',
+            'input[id*="email"]',
+            'input[id*="Email"]',
+            'input[name="email"]',
+            'input[type="text"]'
+        ]
+
+        filled = False
+        for selector in selectors:
+            result = cdp.send("Runtime.evaluate", {
+                "expression": f"""
+                    (() => {{
+                        const input = document.querySelector('{selector}');
+                        if (input) {{
+                            input.value = '{email}';
+                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            return true;
+                        }}
+                        return false;
+                    }})()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                success = result["result"]["result"].get("value")
+                if success:
+                    print(f"   ✓ 成功填写邮箱: {email}")
+                    filled = True
+                    break
+
+        if not filled:
+            print("   ⚠️  未找到work mail输入框，尝试使用DOM API...")
+
+            # 使用DOM API查找输入框
+            result = cdp.send("DOM.getDocument", {"depth": -1}, session_id=session_id)
+            if result and "result" in result:
+                root_node_id = result["result"]["root"]["nodeId"]
+
+                # 查找所有input元素
+                result = cdp.send("DOM.querySelectorAll", {
+                    "nodeId": root_node_id,
+                    "selector": "input"
+                }, session_id=session_id)
+
+                if result and "result" in result and result["result"].get("nodeIds"):
+                    node_ids = result["result"]["nodeIds"]
+                    print(f"   📋 找到 {len(node_ids)} 个输入框")
+
+                    # 遍历所有输入框，查找包含"email"或"work"的
+                    for node_id in node_ids:
+                        # 获取元素的外部HTML
+                        result = cdp.send("DOM.getOuterHTML", {
+                            "nodeId": node_id
+                        }, session_id=session_id)
+
+                        if result and "result" in result:
+                            html = result["result"].get("outerHTML", "").lower()
+                            if "email" in html or "work" in html or 'type="text"' in html:
+                                # 使用JavaScript设置值
+                                result = cdp.send("Runtime.evaluate", {
+                                    "expression": f"""
+                                        (() => {{
+                                            const inputs = document.querySelectorAll('input');
+                                            for (const input of inputs) {{
+                                                const html = input.outerHTML.toLowerCase();
+                                                if (html.includes('email') || html.includes('work') || input.type === 'text' || input.type === 'email') {{
+                                                    input.value = '{email}';
+                                                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                    input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                    return true;
+                                                }}
+                                            }}
+                                            return false;
+                                        }})()
+                                    """,
+                                    "returnByValue": True
+                                }, session_id=session_id)
+
+                                if result and "result" in result and "result" in result["result"]:
+                                    success = result["result"]["result"].get("value")
+                                    if success:
+                                        print(f"   ✓ 成功填写邮箱: {email}")
+                                        filled = True
+                                        break
+
+        if not filled:
+            print("   ✗ 未能填写work mail")
+            print("   💡 提示: 请手动填写邮箱地址")
+            return False
+
+        print("   ✓ 所有操作完成!")
         return True
 
     finally:
@@ -688,13 +796,13 @@ def main():
         print("\n⚠️  未能自动获取邮箱地址")
         print("   提示: 请手动从浏览器窗口中复制邮箱地址")
 
-    # 5. 切换到Augment页面并点击Sign in
+    # 5. 切换到Augment页面并点击Sign in，填写邮箱
     if email:
-        success = switch_to_augment_and_signin(ws_url)
+        success = switch_to_augment_and_signin(ws_url, email)
         if success:
-            print("\n✅ 已切换到Augment登录页面并点击Sign in!")
+            print("\n✅ 已切换到Augment登录页面，点击Sign in并填写邮箱!")
         else:
-            print("\n⚠️  切换到Augment页面失败，请手动操作")
+            print("\n⚠️  自动操作失败，请手动完成剩余步骤")
 
     # 6. 等待用户操作（可选）
     input("\n按回车键关闭窗口...")
