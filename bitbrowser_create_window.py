@@ -24,6 +24,7 @@
 
 import json
 import time
+import random
 import websocket
 from datetime import datetime
 from urllib.request import urlopen, Request
@@ -446,6 +447,140 @@ def save_email_to_file(email):
         return None
 
 
+def click_cloudflare_verify(cdp, session_id):
+    """点击Cloudflare验证框 "Verify you are human"
+
+    Args:
+        cdp: CDPClient实例
+        session_id: CDP会话ID
+
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print("   🛡️  查找Cloudflare验证框...")
+
+    # 1. 查找验证框元素（按照cloudflare_bypass的选择器顺序）
+    selectors = [
+        'div[id*="ulp-"]',                           # Auth0 验证框（优先）
+        'div[class*="ulp-"]',
+        'div[id*="captcha"]',                        # 通用验证码
+        'div[class*="captcha"]',
+        'iframe[src*="challenges.cloudflare.com"]',  # Cloudflare iframe
+        'div[id*="cf-"]',                            # Cloudflare 元素
+        'div[class*="cf-"]',
+        'input[type="checkbox"][id*="cf"]',          # Cloudflare checkbox
+        'iframe[title*="cloudflare"]',
+        'iframe[src*="captcha"]',
+    ]
+
+    # 获取文档根节点
+    result = cdp.send("DOM.getDocument", {"depth": -1}, session_id=session_id)
+    if not result or "result" not in result:
+        print("   ✗ 无法获取 DOM 文档")
+        return False
+
+    root_node_id = result["result"]["root"]["nodeId"]
+    print(f"   ✓ 获取根节点: {root_node_id}")
+
+    # 尝试查找验证框
+    node_id = None
+    matched_selector = None
+    for selector in selectors:
+        print(f"   🔍 尝试选择器: {selector}")
+        result = cdp.send("DOM.querySelectorAll", {
+            "nodeId": root_node_id,
+            "selector": selector
+        }, session_id=session_id)
+
+        if result and "result" in result and result["result"].get("nodeIds"):
+            node_ids = result["result"]["nodeIds"]
+            if node_ids:
+                node_id = node_ids[0]
+                matched_selector = selector
+                print(f"   ✓ 找到 {len(node_ids)} 个元素，使用第一个")
+                break
+
+    if not node_id:
+        print("   ⚠️  未找到验证框元素")
+        print("   💡 提示: 验证框可能还未加载，或已经完成验证")
+        return False
+
+    print(f"   ✓ 找到验证框: {matched_selector}, NodeID={node_id}")
+
+    # 2. 获取元素位置
+    print("   📏 获取元素位置...")
+    result = cdp.send("DOM.getBoxModel", {"nodeId": node_id}, session_id=session_id)
+    if not result or "result" not in result:
+        print("   ✗ 无法获取元素位置，尝试使用JavaScript点击...")
+
+        # 备选方案：使用JavaScript点击
+        result = cdp.send("Runtime.evaluate", {
+            "expression": f"""
+                (() => {{
+                    const selectors = {selectors};
+                    for (const selector of selectors) {{
+                        const element = document.querySelector(selector);
+                        if (element) {{
+                            element.click();
+                            return true;
+                        }}
+                    }}
+                    return false;
+                }})()
+            """,
+            "returnByValue": True
+        }, session_id=session_id)
+
+        if result and "result" in result and "result" in result["result"]:
+            success = result["result"]["result"].get("value")
+            if success:
+                print("   ✓ JavaScript点击成功")
+                return True
+
+        print("   ✗ JavaScript点击也失败")
+        return False
+
+    box_model = result["result"]["model"]
+    content = box_model["content"]
+    x = (content[0] + content[4]) / 2
+    y = (content[1] + content[5]) / 2
+    width = content[4] - content[0]
+    height = content[5] - content[1]
+
+    print(f"   ✓ 元素位置: x={x:.1f}, y={y:.1f}, 大小={width:.0f}x{height:.0f}")
+
+    # 3. 发送CDP鼠标点击事件
+    print("   🖱️  发送CDP鼠标点击事件...")
+
+    # 鼠标移动
+    cdp.send("Input.dispatchMouseEvent", {
+        "type": "mouseMoved",
+        "x": x,
+        "y": y
+    }, session_id=session_id)
+
+    # 鼠标按下
+    cdp.send("Input.dispatchMouseEvent", {
+        "type": "mousePressed",
+        "x": x,
+        "y": y,
+        "button": "left",
+        "clickCount": 1
+    }, session_id=session_id)
+
+    # 鼠标释放
+    cdp.send("Input.dispatchMouseEvent", {
+        "type": "mouseReleased",
+        "x": x,
+        "y": y,
+        "button": "left",
+        "clickCount": 1
+    }, session_id=session_id)
+
+    print("   ✓ CDP点击完成")
+    return True
+
+
 def switch_to_augment_and_signin(ws_url, email):
     """切换到Augment登录页面，点击Sign in并填写邮箱
 
@@ -744,6 +879,21 @@ def switch_to_augment_and_signin(ws_url, email):
             print("   ✗ 未能填写work mail")
             print("   💡 提示: 请手动填写邮箱地址")
             return False
+
+        # 步骤8: 点击Cloudflare验证框
+        print("   🛡️  步骤8: 处理Cloudflare验证...")
+        print("   ⏳ 等待验证框加载...")
+        time.sleep(5)  # 等待验证框加载（增加到5秒）
+
+        verify_success = click_cloudflare_verify(cdp, session_id)
+        if verify_success:
+            print("   ✓ Cloudflare验证框已点击")
+            # 等待验证完成
+            print("   ⏳ 等待验证完成...")
+            time.sleep(5)  # 等待验证完成（增加到5秒）
+        else:
+            print("   ⚠️  未找到验证框或点击失败")
+            print("   💡 提示: 验证框可能还未加载，或已经完成验证，或需要手动操作")
 
         print("   ✓ 所有操作完成!")
         return True
