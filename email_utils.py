@@ -82,7 +82,7 @@ class EmailUtils:
         
         # 3. 去重添加
         if suffix in data["suffixes"]:
-            print(f"   ℹ️  后缀已存在，跳过添加")
+            print(f"   ℹ️  后缀：{suffix}已存在，跳过添加")
             return True
         else:
             data["suffixes"].append(suffix)
