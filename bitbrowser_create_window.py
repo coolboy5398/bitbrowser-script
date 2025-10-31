@@ -31,6 +31,7 @@ from datetime import datetime
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote
+from email_utils import EmailUtils
 
 
 # 比特浏览器本地API地址
@@ -1681,6 +1682,7 @@ def main():
 
     # 4. 保存邮箱地址
     if email:
+        EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
         filename = save_email_to_file(email)
         if filename:
             print(f"\n✅ 邮箱获取成功！")
