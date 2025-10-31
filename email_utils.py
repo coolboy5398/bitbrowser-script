@@ -8,14 +8,17 @@
     - 保存邮箱后缀到JSON文件（自动去重）
     - 获取所有已保存的邮箱后缀
     - 统计邮箱后缀数量
+    - 生成随机邮箱地址（单个或批量）
     - 未来可扩展更多邮箱相关功能
 
 作者: AI Assistant
-版本: 1.0
+版本: 1.1
 """
 
 import json
 import os
+import random
+import string
 
 
 class EmailUtils:
@@ -25,18 +28,28 @@ class EmailUtils:
     
     示例:
         >>> from email_utils import EmailUtils
-        >>> 
+        >>>
         >>> # 保存邮箱后缀
         >>> EmailUtils.save_suffix("test@example.com")
-        >>> 
+        >>>
         >>> # 获取所有后缀
         >>> suffixes = EmailUtils.get_all_suffixes()
         >>> print(suffixes)
         ['@example.com', '@gmail.com']
-        >>> 
+        >>>
         >>> # 获取后缀数量
         >>> count = EmailUtils.get_suffix_count()
         >>> print(f"共有 {count} 个不同的后缀")
+        >>>
+        >>> # 生成随机邮箱
+        >>> email = EmailUtils.generate_random_email()
+        >>> print(email)
+        'k7m2n9p4@example.com'
+        >>>
+        >>> # 批量生成随机邮箱
+        >>> emails = EmailUtils.generate_random_emails(count=5)
+        >>> print(emails)
+        ['a1b2c3d4@example.com', 'x9y8z7w6@gmail.com', ...]
     """
     
     @staticmethod
@@ -105,19 +118,96 @@ class EmailUtils:
     @staticmethod
     def get_suffix_count(filename='email_suffixes.json'):
         """获取邮箱后缀总数
-        
+
         Args:
             filename (str): JSON文件名，默认为 'email_suffixes.json'
-        
+
         Returns:
             int: 后缀总数
-        
+
         Example:
             >>> count = EmailUtils.get_suffix_count()
             >>> print(f"共有 {count} 个不同的后缀")
         """
         suffixes = EmailUtils.get_all_suffixes(filename)
         return len(suffixes)
+
+    @staticmethod
+    def generate_random_email(filename='email_suffixes.json', username_length=8, use_numbers=True, use_dots=False):
+        """生成随机邮箱地址
+
+        从JSON文件中随机选择一个邮箱后缀，并生成随机用户名
+
+        Args:
+            filename (str): JSON文件名，默认为 'email_suffixes.json'
+            username_length (int): 用户名长度，默认为8
+            use_numbers (bool): 是否在用户名中包含数字，默认为True
+            use_dots (bool): 是否在用户名中随机添加点号，默认为False
+
+        Returns:
+            str: 随机生成的邮箱地址，如 "abc12def@example.com"
+                 如果没有可用的后缀，返回None
+
+        Example:
+            >>> email = EmailUtils.generate_random_email()
+            >>> print(email)
+            'k7m2n9p4@milnerinstitute.org'
+
+            >>> email = EmailUtils.generate_random_email(username_length=10, use_numbers=False)
+            >>> print(email)
+            'abcdefghij@zumuntahassociationuk.org'
+
+            >>> email = EmailUtils.generate_random_email(use_dots=True)
+            >>> print(email)
+            'abc.def.123@lbatrust.co.uk'
+        """
+        # 1. 获取所有后缀
+        suffixes = EmailUtils.get_all_suffixes(filename)
+
+        if not suffixes:
+            print(f"   ✗ 没有可用的邮箱后缀，请先添加后缀")
+            return None
+
+        # 2. 随机选择一个后缀
+        suffix = random.choice(suffixes)
+
+        # 3. 生成随机用户名
+        username = EmailUtils._generate_username(username_length, use_numbers, use_dots)
+
+        # 4. 组合成完整邮箱
+        email = username + suffix
+
+        return email
+
+    @staticmethod
+    def generate_random_emails(count=1, filename='email_suffixes.json', username_length=8, use_numbers=True, use_dots=False):
+        """批量生成随机邮箱地址
+
+        Args:
+            count (int): 要生成的邮箱数量，默认为1
+            filename (str): JSON文件名，默认为 'email_suffixes.json'
+            username_length (int): 用户名长度，默认为8
+            use_numbers (bool): 是否在用户名中包含数字，默认为True
+            use_dots (bool): 是否在用户名中随机添加点号，默认为False
+
+        Returns:
+            list: 随机生成的邮箱地址列表
+
+        Example:
+            >>> emails = EmailUtils.generate_random_emails(count=5)
+            >>> for email in emails:
+            ...     print(email)
+            'a1b2c3d4@milnerinstitute.org'
+            'x9y8z7w6@zumuntahassociationuk.org'
+            ...
+        """
+        emails = []
+        for _ in range(count):
+            email = EmailUtils.generate_random_email(filename, username_length, use_numbers, use_dots)
+            if email:
+                emails.append(email)
+
+        return emails
     
     # ==================== 私有辅助方法 ====================
     
@@ -173,11 +263,11 @@ class EmailUtils:
     @staticmethod
     def _save_data(filename, data):
         """保存数据到JSON文件
-        
+
         Args:
             filename (str): JSON文件名
             data (dict): 要保存的数据
-        
+
         Returns:
             bool: 成功返回True，失败返回False
         """
@@ -188,6 +278,44 @@ class EmailUtils:
         except Exception as e:
             print(f"   ✗ 保存失败: {e}")
             return False
+
+    @staticmethod
+    def _generate_username(length=8, use_numbers=True, use_dots=False):
+        """生成随机用户名
+
+        Args:
+            length (int): 用户名长度
+            use_numbers (bool): 是否包含数字
+            use_dots (bool): 是否随机添加点号
+
+        Returns:
+            str: 随机生成的用户名
+        """
+        # 定义字符集
+        chars = string.ascii_lowercase
+        if use_numbers:
+            chars += string.digits
+
+        # 生成随机字符
+        username = ''.join(random.choice(chars) for _ in range(length))
+
+        # 如果需要添加点号
+        if use_dots and length > 3:
+            # 在随机位置插入1-2个点号
+            num_dots = random.randint(1, 2)
+            username_list = list(username)
+
+            for _ in range(num_dots):
+                # 避免在开头、结尾或连续位置插入点号
+                valid_positions = [i for i in range(1, len(username_list) - 1)
+                                   if username_list[i-1] != '.' and username_list[i+1] != '.']
+                if valid_positions:
+                    pos = random.choice(valid_positions)
+                    username_list.insert(pos, '.')
+
+            username = ''.join(username_list)
+
+        return username
 
 
 # ==================== 未来可扩展的方法 ====================
