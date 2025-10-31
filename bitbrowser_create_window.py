@@ -1246,7 +1246,7 @@ def wait_for_onboard_redirect(ws_url, max_wait_seconds=60):
 
 
 def get_payment_method_link(ws_url):
-    """从onboard页面获取Add Payment Method按钮的链接
+    """从onboard页面点击Add Payment Method按钮并获取跳转链接
 
     Args:
         ws_url (str): WebSocket地址
@@ -1254,7 +1254,7 @@ def get_payment_method_link(ws_url):
     Returns:
         str: 支付方法链接，失败返回None
     """
-    print(f"\n🔍 查找Add Payment Method按钮链接...")
+    print(f"\n🔍 点击Add Payment Method按钮获取链接...")
 
     cdp = CDPClient(ws_url)
 
@@ -1302,115 +1302,116 @@ def get_payment_method_link(ws_url):
         print(f"   ✓ 已附加到页面 (sessionId: {session_id})")
 
         # 5. 启用必要的域
-        print("   ⚙️  步骤5: 启用DOM和Runtime域...")
+        print("   ⚙️  步骤5: 启用必要的域...")
         cdp.send("DOM.enable", {}, session_id=session_id)
         cdp.send("Runtime.enable", {}, session_id=session_id)
         cdp.send("Page.enable", {}, session_id=session_id)
+        cdp.send("Network.enable", {}, session_id=session_id)
 
         # 等待页面完全加载
         print("   ⏳ 等待页面加载...")
         human_delay(3.0)
 
-        # 6. 使用JavaScript查找按钮并获取链接
+        # 6. 查找并点击Add Payment Method按钮
         print("   🔍 步骤6: 查找Add Payment Method按钮...")
 
-        # 尝试多种方式查找按钮
-        search_scripts = [
-            # 方法1: 查找包含"Add Payment Method"文本的button
-            """
+        # 先尝试查找按钮
+        result = cdp.send("Runtime.evaluate", {
+            "expression": """
             (function() {
                 const buttons = Array.from(document.querySelectorAll('button'));
                 const btn = buttons.find(b => b.textContent.includes('Add Payment Method'));
                 if (btn) {
-                    // 尝试获取onclick事件或data属性中的链接
-                    const onclick = btn.getAttribute('onclick');
-                    if (onclick) return onclick;
-
-                    // 查找data-href或类似属性
-                    const dataHref = btn.getAttribute('data-href') || btn.getAttribute('data-url');
-                    if (dataHref) return dataHref;
-
-                    // 返回按钮的HTML以便分析
                     return btn.outerHTML;
                 }
                 return null;
             })()
             """,
-            # 方法2: 查找包含"payment"的链接
-            """
+            "returnByValue": True
+        }, session_id=session_id)
+
+        if result and "result" in result and "result" in result["result"]:
+            value = result["result"]["result"].get("value")
+            if value:
+                print(f"   ✓ 找到按钮")
+                print(f"   📝 按钮HTML: {value[:100]}...")
+            else:
+                print("   ✗ 未找到Add Payment Method按钮")
+                return None
+        else:
+            print("   ✗ 未找到Add Payment Method按钮")
+            return None
+
+        # 7. 点击按钮并监听导航
+        print("   🖱️  步骤7: 点击按钮...")
+
+        # 点击按钮
+        click_result = cdp.send("Runtime.evaluate", {
+            "expression": """
             (function() {
-                const links = Array.from(document.querySelectorAll('a[href*="payment"]'));
-                if (links.length > 0) {
-                    return links[0].href;
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const btn = buttons.find(b => b.textContent.includes('Add Payment Method'));
+                if (btn) {
+                    btn.click();
+                    return true;
                 }
-                return null;
+                return false;
             })()
             """,
-            # 方法3: 查找所有按钮和链接，返回包含payment相关文本的
-            """
-            (function() {
-                const elements = Array.from(document.querySelectorAll('button, a'));
-                const paymentEl = elements.find(el =>
-                    el.textContent.toLowerCase().includes('payment') ||
-                    el.textContent.toLowerCase().includes('add payment')
-                );
-                if (paymentEl) {
-                    if (paymentEl.tagName === 'A') {
-                        return paymentEl.href;
-                    } else {
-                        // 按钮可能触发导航，尝试获取相关属性
-                        return paymentEl.outerHTML;
-                    }
-                }
-                return null;
-            })()
-            """
-        ]
+            "returnByValue": True
+        }, session_id=session_id)
 
-        payment_link = None
-        for i, script in enumerate(search_scripts, 1):
-            print(f"   🔍 尝试方法{i}...")
-            result = cdp.send("Runtime.evaluate", {
-                "expression": script,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                value = result["result"]["result"].get("value")
-                if value:
-                    print(f"   ✓ 方法{i}找到结果: {value[:100]}...")
-
-                    # 如果是完整的URL，直接返回
-                    if value.startswith('http'):
-                        payment_link = value
-                        break
-
-                    # 如果是HTML，尝试从中提取链接
-                    if '<button' in value or '<a' in value:
-                        # 尝试从HTML中提取href
-                        import re
-                        href_match = re.search(r'href=["\']([^"\']+)["\']', value)
-                        if href_match:
-                            payment_link = href_match.group(1)
-                            break
-
-                        # 尝试从onclick中提取URL
-                        onclick_match = re.search(r'window\.location\s*=\s*["\']([^"\']+)["\']', value)
-                        if onclick_match:
-                            payment_link = onclick_match.group(1)
-                            break
-
-                        # 保存HTML以便后续分析
-                        print(f"   💡 找到按钮HTML，但未找到直接链接")
-                        print(f"   📝 按钮HTML: {value}")
-
-        if payment_link:
-            print(f"   ✓ 成功获取支付方法链接!")
-            print(f"   🔗 链接: {payment_link}")
-            return payment_link
+        if click_result and "result" in click_result and "result" in click_result["result"]:
+            clicked = click_result["result"]["result"].get("value")
+            if clicked:
+                print("   ✓ 按钮已点击")
+            else:
+                print("   ✗ 点击按钮失败")
+                return None
         else:
-            print("   ✗ 未找到支付方法链接")
+            print("   ✗ 点击按钮失败")
             return None
+
+        # 8. 等待页面导航并获取新URL
+        print("   ⏳ 步骤8: 等待页面导航...")
+        human_delay(2.0)  # 等待导航开始
+
+        # 轮询检测URL变化（最多等待10秒）
+        payment_link = None
+        max_wait = 10
+        for attempt in range(max_wait):
+            # 获取当前所有页面
+            result = cdp.send("Target.getTargets", {})
+            if result and "result" in result:
+                targets = result["result"]["targetInfos"]
+
+                # 查找新打开的页面或URL变化的页面
+                for target in targets:
+                    if target.get("type") == "page":
+                        url = target.get("url", "")
+
+                        # 检查是否是支付相关页面
+                        if "payment" in url.lower() or "billing" in url.lower() or "stripe" in url.lower():
+                            payment_link = url
+                            print(f"   ✓ 检测到导航到支付页面（用时{attempt + 1}秒）")
+                            print(f"   🔗 链接: {payment_link}")
+                            return payment_link
+
+                        # 检查是否URL发生了变化（不再是onboard页面）
+                        if "app.augmentcode.com" in url and "onboard" not in url:
+                            payment_link = url
+                            print(f"   ✓ 检测到页面跳转（用时{attempt + 1}秒）")
+                            print(f"   🔗 链接: {payment_link}")
+                            return payment_link
+
+            # 显示等待进度
+            if attempt < max_wait - 1:
+                print(f"   ⏳ 等待导航... ({attempt + 1}秒)")
+                human_delay(1.0)
+
+        print(f"   ⚠️  未检测到页面导航（已等待{max_wait}秒）")
+        print("   💡 提示: 按钮可能没有触发导航，或导航速度较慢")
+        return None
 
     except Exception as e:
         print(f"   ✗ 获取支付方法链接时出错: {e}")
@@ -1722,6 +1723,7 @@ def main():
             email = None  # 标记失败，跳过后续步骤
 
     # 8. 获取Add Payment Method按钮链接
+    payment_link_success = False
     if email:
         payment_link = get_payment_method_link(ws_url)
         if payment_link:
@@ -1734,6 +1736,7 @@ def main():
                 with open(link_filename, 'w', encoding='utf-8') as f:
                     f.write(payment_link)
                 print(f"   💾 链接已保存到: {link_filename}")
+                payment_link_success = True
             except Exception as e:
                 print(f"   ⚠️  保存链接失败: {e}")
         else:
@@ -1741,6 +1744,7 @@ def main():
             print("   💡 提示: 可能需要等待页面加载或手动查找")
 
     # 9. 获取session cookie
+    session_success = False
     if email:
         session = get_session_cookie(ws_url)
         if session:
@@ -1753,19 +1757,34 @@ def main():
                 with open(session_filename, 'w', encoding='utf-8') as f:
                     f.write(session)
                 print(f"   💾 Session已保存到: {session_filename}")
+                session_success = True
             except Exception as e:
                 print(f"   ⚠️  保存session失败: {e}")
         else:
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
 
-    # 10. 等待用户操作（可选）
-    input("\n按回车键关闭窗口...")
+    # 10. 判断是否自动关闭窗口
+    should_auto_close = payment_link_success and session_success
 
-    # 11. 关闭窗口
-    close_browser_window(browser_id)
+    if should_auto_close:
+        print("\n🎉 所有关键信息获取成功！")
+        print("   ✓ 支付方法链接已获取")
+        print("   ✓ Session cookie已获取")
+        print("\n🔒 自动关闭浏览器窗口...")
+        close_browser_window(browser_id)
+        print("\n✨ 所有操作完成！")
+    else:
+        print("\n⚠️  部分信息获取失败，窗口保持打开状态")
+        if not payment_link_success:
+            print("   ✗ 支付方法链接获取失败")
+        if not session_success:
+            print("   ✗ Session cookie获取失败")
 
-    print("\n✨ 所有操作完成！")
+        # 等待用户操作
+        input("\n按回车键手动关闭窗口...")
+        close_browser_window(browser_id)
+        print("\n✨ 操作完成！")
 
 
 if __name__ == "__main__":
