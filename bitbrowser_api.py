@@ -90,12 +90,12 @@ class BitBrowserAPI:
     BASE_URL = "http://127.0.0.1:54345"
     
     @staticmethod
-    def create_window(name, platform="https://www.google.com", **kwargs):
+    def create_window(name, platform=None, **kwargs):
         """创建比特浏览器窗口
-        
+
         Args:
             name (str): 窗口名称
-            platform (str): 平台URL，默认为Google
+            platform (str, optional): 平台URL，默认不设置
             **kwargs: 其他可选参数
                 - remark (str): 备注
                 - url (str): 额外打开的URL
@@ -104,33 +104,35 @@ class BitBrowserAPI:
                 - port (int): 代理端口
                 - proxyUserName (str): 代理用户名（如果需要认证）
                 - proxyPassword (str): 代理密码（如果需要认证）
-        
+
         Returns:
             str: 创建成功返回浏览器窗口ID，失败返回None
-        
+
         Example:
-            >>> # 不使用代理
-            >>> browser_id = BitBrowserAPI.create_window("测试窗口", "https://www.facebook.com")
+            >>> # 不使用代理，不设置platform
+            >>> browser_id = BitBrowserAPI.create_window("测试窗口")
             >>>
             >>> # 使用SOCKS5代理
             >>> browser_id = BitBrowserAPI.create_window(
             >>>     name="测试窗口",
-            >>>     platform="https://www.facebook.com",
             >>>     proxyType="socks5",
             >>>     host="127.0.0.1",
             >>>     port=7890
             >>> )
         """
         print(f"🔨 正在创建窗口: {name}")
-        
+
         # 构建请求数据
         data = {
             "name": name,
-            "platform": platform,
             "browserFingerPrint": {},  # 空对象表示使用随机指纹
             "proxyMethod": 2,  # 2表示自定义代理
             "proxyType": kwargs.get("proxyType", "noproxy"),
         }
+
+        # 只在platform有值时才添加
+        if platform:
+            data["platform"] = platform
 
         # 添加代理配置
         if "host" in kwargs:

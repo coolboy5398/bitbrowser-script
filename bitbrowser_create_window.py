@@ -1416,12 +1416,10 @@ def main():
     print("=" * 70)
     print("比特浏览器窗口创建脚本 v1.0")
     print("=" * 70)
-    
-    # 1. 创建窗口（使用SOCKS5代理）
+
+    # 1. 创建窗口（使用SOCKS5代理，不设置platform和url）
     browser_id = BitBrowserAPI.create_window(
         name="Augment注册",
-        platform="https://mail.chatgpt.org.uk/",
-        url="https://login.augmentcode.com/",
         remark="Augment注册",
         proxyType="socks5",
         host="127.0.0.1",
@@ -1434,16 +1432,53 @@ def main():
 
     # 2. 打开窗口
     result = BitBrowserAPI.open_window(browser_id)
-    
+
     if not result:
         print("\n❌ 打开窗口失败，程序退出")
         return
-    
-    # 3. 获取邮箱地址
+
+    # 3. 获取WebSocket地址
     ws_url = result.get("ws")
+
+    # 4. 使用CDP打开标签页
+    print("\n📑 正在打开标签页...")
+    cdp = CDPClient(ws_url)
+
+    try:
+        # 先打开邮箱页面
+        print("   📧 打开邮箱页面...")
+        result = cdp.send("Target.createTarget", {
+            "url": "https://mail.chatgpt.org.uk/"
+        })
+        if result and "result" in result:
+            print("   ✓ 邮箱页面已打开")
+        else:
+            print("   ✗ 邮箱页面打开失败")
+
+        # 等待一下
+        human_delay(1.0)
+
+        # 再打开登录页面
+        print("   🔐 打开登录页面...")
+        result = cdp.send("Target.createTarget", {
+            "url": "https://login.augmentcode.com/"
+        })
+        if result and "result" in result:
+            print("   ✓ 登录页面已打开")
+        else:
+            print("   ✗ 登录页面打开失败")
+
+        # 等待页面加载
+        print("   ⏳ 等待页面加载...")
+        human_delay(3.0)
+
+    finally:
+        cdp.close()
+
+    # 5. 获取邮箱地址
     email = get_email_from_browser(ws_url)
 
-    # 4. 保存邮箱地址
+    # 6. 保存邮箱地址
     if email:
         EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
         filename = save_email_to_file(email)
@@ -1456,7 +1491,7 @@ def main():
         print("\n⚠️  未能自动获取邮箱地址")
         print("   提示: 请手动从浏览器窗口中复制邮箱地址")
 
-    # 5. 切换到Augment页面并点击Sign in，填写邮箱
+    # 7. 切换到Augment页面并点击Sign in，填写邮箱
     if email:
         success = switch_to_augment_and_signin(ws_url, email)
         if success:
@@ -1465,7 +1500,7 @@ def main():
             print("\n⚠️  自动操作失败，请手动完成剩余步骤")
             email = None  # 标记失败，跳过后续步骤
 
-    # 6. 获取验证码并填写
+    # 8. 获取验证码并填写
     if email:
         code_success = fill_verification_code(ws_url, email)
         if code_success:
@@ -1474,7 +1509,7 @@ def main():
             print("\n⚠️  验证码填写失败，请手动完成")
             email = None  # 标记失败，跳过后续步骤
 
-    # 7. 等待页面跳转到onboard
+    # 9. 等待页面跳转到onboard
     if email:
         redirect_success = wait_for_onboard_redirect(ws_url, max_wait_seconds=60)
         if redirect_success:
@@ -1484,7 +1519,7 @@ def main():
             print("   💡 提示: 可能需要手动完成验证或等待更长时间")
             email = None  # 标记失败，跳过后续步骤
 
-    # 8. 获取Add Payment Method按钮链接
+    # 10. 获取Add Payment Method按钮链接
     payment_link_success = False
     if email:
         payment_link = get_payment_method_link(ws_url)
@@ -1505,7 +1540,7 @@ def main():
             print("\n⚠️  支付方法链接获取失败")
             print("   💡 提示: 可能需要等待页面加载或手动查找")
 
-    # 9. 获取session cookie
+    # 11. 获取session cookie
     session_success = False
     if email:
         session = get_session_cookie(ws_url)
@@ -1526,7 +1561,7 @@ def main():
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
 
-    # 10. 判断是否自动关闭窗口
+    # 12. 判断是否自动关闭窗口
     should_auto_close = payment_link_success and session_success
 
     if should_auto_close:
