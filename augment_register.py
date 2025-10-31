@@ -15,7 +15,7 @@
 
 使用方法：
     1. 确保比特浏览器客户端正在运行
-    2. 运行此脚本: python bitbrowser_create_window.py
+    2. 运行此脚本: python augment_register.py
     3. 脚本会自动创建、打开窗口，并显示WebSocket地址
 
 作者: AI Assistant
