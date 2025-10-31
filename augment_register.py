@@ -189,47 +189,6 @@ def get_email_from_browser(ws_url):
         cdp.close()
 
 
-def save_email_to_file(email):
-    """保存邮箱地址到文件
-
-    Args:
-        email (str): 邮箱地址
-
-    Returns:
-        str: 保存的文件名，失败返回None
-    """
-    print(f"\n💾 正在保存邮箱地址...")
-
-    access_url = f"https://mail.chatgpt.org.uk/{email}"
-
-    content = f"""GPTMail 临时邮箱地址
-===================
-
-生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-网站地址: https://mail.chatgpt.org.uk/
-
-邮箱地址: {email}
-
-访问链接: {access_url}
-
-说明:
-- 此邮箱为临时邮箱，1天后自动删除
-- 收件箱会自动刷新（30秒）
-- 可以通过访问链接直接查看该邮箱的收件箱
-"""
-
-    filename = f"临时邮箱_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"   ✓ 邮箱地址已保存到: {filename}")
-        return filename
-    except Exception as e:
-        print(f"   ✗ 保存失败: {e}")
-        return None
-
-
 def click_cloudflare_verify(cdp, session_id):
     """点击Cloudflare验证框 "Verify you are human"
 
@@ -1481,7 +1440,7 @@ def main():
     # 6. 保存邮箱地址
     if email:
         EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
-        filename = save_email_to_file(email)
+        filename = EmailUtils.save_email_to_file(email)
         if filename:
             print(f"\n✅ 邮箱获取成功！")
             print(f"   邮箱地址: {email}")
