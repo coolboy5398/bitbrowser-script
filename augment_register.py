@@ -31,7 +31,7 @@ from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 from email_utils import EmailUtils
 from bitbrowser_api import BitBrowserAPI, CDPClient, human_delay
-from email_providers import EmailProviderFactory
+from providers import EmailProviderFactory
 
 
 
@@ -1304,15 +1304,11 @@ def main():
     # 5. 获取邮箱地址
     email = get_email_from_browser(ws_url, provider)
 
-    # 6. 保存邮箱地址
+    # 6. 保存邮箱后缀
     if email:
         EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
-        filename = provider.save_email_to_file(email)
-        if filename:
-            print(f"\n✅ 邮箱获取成功！")
-            print(f"   邮箱地址: {email}")
-            print(f"   访问链接: {provider.get_access_url(email)}")
-            print(f"   保存文件: {filename}")
+        print(f"\n✅ 邮箱获取成功！")
+        print(f"   邮箱地址: {email}")
     else:
         print("\n⚠️  未能自动获取邮箱地址")
         print("   提示: 请手动从浏览器窗口中复制邮箱地址")

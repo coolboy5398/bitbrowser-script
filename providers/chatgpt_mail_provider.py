@@ -1,100 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-邮箱服务提供者系统
-提供统一的邮箱服务接口，支持多种临时邮箱服务
+ChatGPT临时邮箱服务提供者
 
-功能：
-    - 抽象邮箱服务接口
-    - ChatGPT临时邮箱实现
-    - 工厂模式创建邮箱服务实例
-    - 方便扩展新的邮箱服务
+实现 https://mail.chatgpt.org.uk/ 临时邮箱服务
 
 作者: AI Assistant
 版本: 1.0
 """
 
 import re
-from abc import ABC, abstractmethod
-from datetime import datetime
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 import json
 
-
-class EmailProvider(ABC):
-    """邮箱服务提供者抽象基类
-    
-    定义所有邮箱服务必须实现的接口
-    """
-    
-    @abstractmethod
-    def get_page_url(self) -> str:
-        """获取邮箱页面URL
-        
-        Returns:
-            str: 邮箱页面URL
-        """
-        pass
-    
-    @abstractmethod
-    def get_domain_patterns(self) -> list:
-        """获取邮箱域名匹配模式
-        
-        Returns:
-            list: 域名匹配模式列表，用于识别邮箱页面
-        """
-        pass
-    
-    @abstractmethod
-    def get_email_from_page(self, cdp, session_id) -> str:
-        """从页面获取邮箱地址
-        
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-            
-        Returns:
-            str: 邮箱地址，失败返回None
-        """
-        pass
-    
-    @abstractmethod
-    def get_verification_code(self, email: str) -> str:
-        """获取验证码
-        
-        Args:
-            email: 邮箱地址
-            
-        Returns:
-            str: 验证码，失败返回None
-        """
-        pass
-    
-    @abstractmethod
-    def save_email_to_file(self, email: str) -> str:
-        """保存邮箱地址到文件
-        
-        Args:
-            email: 邮箱地址
-            
-        Returns:
-            str: 保存的文件名，失败返回None
-        """
-        pass
-    
-    @abstractmethod
-    def get_access_url(self, email: str) -> str:
-        """获取邮箱访问链接
-        
-        Args:
-            email: 邮箱地址
-            
-        Returns:
-            str: 访问链接
-        """
-        pass
+from .email_provider import EmailProvider
 
 
 class ChatGPTMailProvider(EmailProvider):
@@ -206,7 +127,7 @@ class ChatGPTMailProvider(EmailProvider):
         
         print(f"   🔗 API地址: {api_url}")
         
-        # 最多尝试10次，每次间隔3秒
+        # 最多尝试10次,每次间隔3秒
         max_retries = 10
         for attempt in range(max_retries):
             try:
@@ -221,7 +142,7 @@ class ChatGPTMailProvider(EmailProvider):
                 
                 # 检查是否有邮件
                 if not data.get('emails'):
-                    print(f"   ⏳ 暂无邮件，等待3秒后重试...")
+                    print(f"   ⏳ 暂无邮件,等待3秒后重试...")
                     from bitbrowser_api import human_delay
                     human_delay(3.0)
                     continue
@@ -259,7 +180,7 @@ class ChatGPTMailProvider(EmailProvider):
                         print(f"   ⚠️  未能从邮件内容中提取验证码")
                         print(f"   📄 邮件内容预览: {content[:200]}...")
                 
-                print(f"   ⚠️  未找到Augment邮件，等待3秒后重试...")
+                print(f"   ⚠️  未找到Augment邮件,等待3秒后重试...")
                 from bitbrowser_api import human_delay
                 human_delay(3.0)
                 
@@ -281,102 +202,4 @@ class ChatGPTMailProvider(EmailProvider):
         
         print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
         return None
-    
-    def save_email_to_file(self, email: str) -> str:
-        """保存邮箱地址到文件"""
-        print(f"\n💾 正在保存邮箱地址...")
-        
-        access_url = self.get_access_url(email)
-        
-        content = f"""GPTMail 临时邮箱地址
-===================
-
-生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-网站地址: {self.base_url}/
-
-邮箱地址: {email}
-
-访问链接: {access_url}
-
-说明:
-- 此邮箱为临时邮箱，1天后自动删除
-- 收件箱会自动刷新（30秒）
-- 可以通过访问链接直接查看该邮箱的收件箱
-"""
-        
-        filename = f"临时邮箱_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        
-        try:
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(content)
-            print(f"   ✓ 邮箱地址已保存到: {filename}")
-            return filename
-        except Exception as e:
-            print(f"   ✗ 保存失败: {e}")
-            return None
-    
-    def get_access_url(self, email: str) -> str:
-        """获取邮箱访问链接"""
-        return f"{self.base_url}/{email}"
-
-
-# 邮箱服务配置字典
-PROVIDERS = {
-    'chatgpt': {
-        'name': 'ChatGPT临时邮箱',
-        'class': ChatGPTMailProvider,
-        'description': 'https://mail.chatgpt.org.uk/ 临时邮箱服务'
-    },
-    # 未来可以添加更多邮箱服务
-    # 'tempmail': {
-    #     'name': 'TempMail',
-    #     'class': TempMailProvider,
-    #     'description': 'https://temp-mail.org/ 临时邮箱服务'
-    # },
-}
-
-
-class EmailProviderFactory:
-    """邮箱服务提供者工厂类
-    
-    负责创建和管理邮箱服务实例
-    """
-    
-    @staticmethod
-    def create(provider_name: str = 'chatgpt') -> EmailProvider:
-        """创建邮箱服务实例
-        
-        Args:
-            provider_name: 邮箱服务名称，默认为'chatgpt'
-            
-        Returns:
-            EmailProvider: 邮箱服务实例
-            
-        Raises:
-            ValueError: 如果provider_name不存在
-        """
-        if provider_name not in PROVIDERS:
-            available = ', '.join(PROVIDERS.keys())
-            raise ValueError(f"未知的邮箱服务: {provider_name}。可用服务: {available}")
-        
-        provider_config = PROVIDERS[provider_name]
-        provider_class = provider_config['class']
-        
-        return provider_class()
-    
-    @staticmethod
-    def get_available_providers() -> list:
-        """获取所有可用的邮箱服务
-        
-        Returns:
-            list: 可用邮箱服务列表
-        """
-        return [
-            {
-                'name': key,
-                'display_name': config['name'],
-                'description': config['description']
-            }
-            for key, config in PROVIDERS.items()
-        ]
 
