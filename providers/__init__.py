@@ -11,11 +11,13 @@
 
 from .email_provider import EmailProvider
 from .chatgpt_mail_provider import ChatGPTMailProvider
+from .chat_tempmail_provider import ChatTempMailProvider
 from .email_provider_factory import EmailProviderFactory, PROVIDERS
 
 __all__ = [
     'EmailProvider',
     'ChatGPTMailProvider',
+    'ChatTempMailProvider',
     'EmailProviderFactory',
     'PROVIDERS',
 ]
