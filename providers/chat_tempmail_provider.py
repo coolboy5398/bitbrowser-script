@@ -193,10 +193,13 @@ class ChatTempMailProvider(EmailProvider):
             req.add_header('User-Agent', 'Mozilla/5.0')
 
             response = urlopen(req, timeout=10)
-            result = json.loads(response.read().decode('utf-8'))
+            response_data = response.read().decode('utf-8')
+            result = json.loads(response_data)
 
-            # 提取邮箱地址
-            email_address = result.get('address')
+            print(f"   📝 API响应: {response_data}")
+
+            # 提取邮箱地址 (API返回的字段是 'email' 而不是 'address')
+            email_address = result.get('email')
             if email_address:
                 # 缓存邮箱ID
                 email_id = result.get('id')
@@ -205,10 +208,17 @@ class ChatTempMailProvider(EmailProvider):
 
                 return email_address
 
+            print(f"   ⚠️  API响应中没有email字段")
             return None
 
+        except HTTPError as e:
+            error_body = e.read().decode('utf-8') if e.fp else 'No error body'
+            print(f"   ✗ HTTP错误 {e.code}: {error_body}")
+            return None
         except Exception as e:
-            print(f"   ✗ 创建邮箱失败: {e}")
+            print(f"   ✗ 创建邮箱失败: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _get_available_domains(self) -> list:
@@ -224,12 +234,18 @@ class ChatTempMailProvider(EmailProvider):
             req.add_header('User-Agent', 'Mozilla/5.0')
 
             response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode('utf-8'))
+            response_data = response.read().decode('utf-8')
+            data = json.loads(response_data)
 
+            print(f"   📝 可用域名: {data.get('domains', [])}")
             return data.get('domains', [])
 
+        except HTTPError as e:
+            error_body = e.read().decode('utf-8') if e.fp else 'No error body'
+            print(f"   ⚠️  获取域名列表HTTP错误 {e.code}: {error_body}")
+            return []
         except Exception as e:
-            print(f"   ⚠️  获取域名列表失败: {e}")
+            print(f"   ⚠️  获取域名列表失败: {type(e).__name__}: {e}")
             return []
 
     def _get_email_id(self, email_address: str) -> str:

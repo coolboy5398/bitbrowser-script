@@ -1309,7 +1309,8 @@ def main():
     print("=" * 70)
 
     # 0. 初始化邮箱服务提供者
-    provider = EmailProviderFactory.create('chatgpt')
+    # provider = EmailProviderFactory.create('chatgpt')
+    provider = EmailProviderFactory.create('chat-tempmail', api_key='mk_UTCVqjR7yXgqvKtWPPsSW2YNFE76NpMr')
     print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
 
@@ -1341,20 +1342,24 @@ def main():
     cdp = CDPClient(ws_url)
 
     try:
-        # 先打开邮箱页面（使用provider的URL）
-        print("   📧 打开邮箱页面...")
-        result = cdp.send("Target.createTarget", {
-            "url": provider.get_page_url()
-        })
-        if result and "result" in result:
-            print("   ✓ 邮箱页面已打开")
+        # 检查是否需要打开邮箱页面
+        if provider.needs_browser_page():
+            # 先打开邮箱页面（使用provider的URL）
+            print("   📧 打开邮箱页面...")
+            result = cdp.send("Target.createTarget", {
+                "url": provider.get_page_url()
+            })
+            if result and "result" in result:
+                print("   ✓ 邮箱页面已打开")
+            else:
+                print("   ✗ 邮箱页面打开失败")
+
+            # 等待一下
+            human_delay(1.0)
         else:
-            print("   ✗ 邮箱页面打开失败")
+            print("   ℹ️  该邮箱服务不需要打开页面")
 
-        # 等待一下
-        human_delay(1.0)
-
-        # 再打开登录页面
+        # 打开登录页面
         print("   🔐 打开登录页面...")
         result = cdp.send("Target.createTarget", {
             "url": "https://login.augmentcode.com/"
