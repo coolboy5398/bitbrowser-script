@@ -31,16 +31,18 @@ from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 from email_utils import EmailUtils
 from bitbrowser_api import BitBrowserAPI, CDPClient, human_delay
+from email_providers import EmailProviderFactory
 
 
 
 
 
-def get_email_from_browser(ws_url):
+def get_email_from_browser(ws_url, provider):
     """从浏览器页面获取邮箱地址
 
     Args:
         ws_url (str): WebSocket地址
+        provider (EmailProvider): 邮箱服务提供者
 
     Returns:
         str: 邮箱地址，失败返回None
@@ -59,13 +61,16 @@ def get_email_from_browser(ws_url):
 
         targets = result["result"]["targetInfos"]
 
-        # 根据URL查找邮箱页面
+        # 根据URL查找邮箱页面（使用provider的域名模式）
         page_target = None
+        domain_patterns = provider.get_domain_patterns()
+
         for target in targets:
             if target.get("type") == "page":
                 url = target.get("url", "")
                 print(f"   📄 发现页面: {url}")
-                if "mail.chatgpt.org.uk" in url:
+                # 检查URL是否匹配任一域名模式
+                if any(pattern in url for pattern in domain_patterns):
                     page_target = target
                     print(f"   ✓ 找到邮箱页面!")
                     break
@@ -115,75 +120,9 @@ def get_email_from_browser(ws_url):
         human_delay(3.0)
         print("   ✓ 页面加载完成")
 
-        # 步骤5: 多次尝试获取邮箱地址
-        print("   🔍 步骤5: 查找邮箱地址...")
-        max_retries = 3
-        for attempt in range(max_retries):
-            if attempt > 0:
-                print(f"   🔄 第 {attempt + 1} 次尝试...")
-                human_delay(2.0)  # 重试间隔（人类化延迟）
-
-            # 方法1: 使用JavaScript查找
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        // 方法1: 查找所有包含@的文本节点
-                        const walker = document.createTreeWalker(
-                            document.body,
-                            NodeFilter.SHOW_TEXT,
-                            null,
-                            false
-                        );
-
-                        let node;
-                        while(node = walker.nextNode()) {
-                            const text = node.textContent.trim();
-                            if (text.includes('@') && (text.includes('chatgptuk.pp.ua') || text.includes('chatgpt.org.uk'))) {
-                                // 使用正则提取邮箱
-                                const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                                if (match) {
-                                    return match[0];
-                                }
-                            }
-                        }
-
-                        // 方法2: 查找特定的元素
-                        const selectors = [
-                            'input[type="text"]',
-                            'input[readonly]',
-                            'div[class*="email"]',
-                            'span[class*="email"]',
-                            'p',
-                            'div'
-                        ];
-
-                        for (const selector of selectors) {
-                            const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {
-                                const text = el.textContent || el.value || '';
-                                if (text.includes('@') && (text.includes('chatgptuk.pp.ua') || text.includes('chatgpt.org.uk'))) {
-                                    const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                                    if (match) {
-                                        return match[0];
-                                    }
-                                }
-                            }
-                        }
-
-                        return null;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                email = result["result"]["result"].get("value")
-                if email:
-                    print(f"   ✓ 找到邮箱地址: {email}")
-                    return email
-
-        print("   ✗ 未找到邮箱地址")
-        return None
+        # 步骤5: 使用provider获取邮箱地址
+        email = provider.get_email_from_page(cdp, session_id)
+        return email
 
     finally:
         cdp.close()
@@ -329,95 +268,17 @@ def click_cloudflare_verify(cdp, session_id):
     return True
 
 
-def get_verification_code_from_email(email):
+def get_verification_code_from_email(email, provider):
     """从临时邮箱API获取验证码
 
     Args:
         email: 邮箱地址
+        provider (EmailProvider): 邮箱服务提供者
 
     Returns:
         str: 验证码，失败返回None
     """
-    print(f"\n📧 正在从邮箱获取验证码...")
-    print(f"   📮 邮箱地址: {email}")
-
-    # URL编码邮箱地址
-    encoded_email = quote(email)
-    api_url = f"https://mail.chatgpt.org.uk/api/get-emails?email={encoded_email}"
-
-    print(f"   🔗 API地址: {api_url}")
-
-    # 最多尝试10次，每次间隔3秒
-    max_retries = 10
-    for attempt in range(max_retries):
-        try:
-            print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-
-            # 发送HTTP请求
-            req = Request(api_url)
-            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-
-            response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode('utf-8'))
-
-            # 检查是否有邮件
-            if not data.get('emails'):
-                print(f"   ⏳ 暂无邮件，等待3秒后重试...")
-                human_delay(3.0)
-                continue
-
-            emails = data['emails']
-            print(f"   ✓ 找到 {len(emails)} 封邮件")
-
-            # 查找来自 support@augmentcode.com 的邮件
-            for email_data in emails:
-                from_addr = email_data.get('from', '')
-                subject = email_data.get('subject', '')
-                content = email_data.get('content', '')
-
-                print(f"   📧 邮件: {from_addr} - {subject}")
-
-                if 'augmentcode.com' in from_addr.lower():
-                    print(f"   ✓ 找到Augment邮件")
-
-                    # 从内容中提取验证码
-                    # 匹配格式: "Your verification code is: 529891"
-                    patterns = [
-                        r'verification code is:\s*(\d{6})',
-                        r'verification code is:\s*<b>(\d{6})</b>',
-                        r'code is:\s*(\d{6})',
-                        r'code:\s*(\d{6})',
-                        r'(\d{6})',  # 最后尝试匹配任意6位数字
-                    ]
-
-                    for pattern in patterns:
-                        match = re.search(pattern, content, re.IGNORECASE)
-                        if match:
-                            code = match.group(1)
-                            print(f"   ✓ 找到验证码: {code}")
-                            return code
-
-                    print(f"   ⚠️  未能从邮件内容中提取验证码")
-                    print(f"   📄 邮件内容预览: {content[:200]}...")
-
-            print(f"   ⚠️  未找到Augment邮件，等待3秒后重试...")
-            human_delay(3.0)
-
-        except HTTPError as e:
-            print(f"   ✗ HTTP错误: {e.code} {e.reason}")
-            if attempt < max_retries - 1:
-                human_delay(3.0)
-        except URLError as e:
-            print(f"   ✗ 网络错误: {e.reason}")
-            if attempt < max_retries - 1:
-                human_delay(3.0)
-        except Exception as e:
-            print(f"   ✗ 错误: {e}")
-            if attempt < max_retries - 1:
-                human_delay(3.0)
-
-    print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
-    return None
+    return provider.get_verification_code(email)
 
 
 def click_continue_button(cdp, session_id):
@@ -1233,12 +1094,13 @@ def get_session_cookie(ws_url):
         cdp.close()
 
 
-def fill_verification_code(ws_url, email):
+def fill_verification_code(ws_url, email, provider):
     """获取验证码并填写
 
     Args:
         ws_url (str): WebSocket地址
         email (str): 邮箱地址
+        provider (EmailProvider): 邮箱服务提供者
 
     Returns:
         bool: 成功返回True，失败返回False
@@ -1246,7 +1108,7 @@ def fill_verification_code(ws_url, email):
     print(f"\n🔐 正在获取并填写验证码...")
 
     # 1. 获取验证码
-    verification_code = get_verification_code_from_email(email)
+    verification_code = get_verification_code_from_email(email, provider)
 
     if not verification_code:
         print("   ✗ 未能获取验证码")
@@ -1376,6 +1238,11 @@ def main():
     print("比特浏览器窗口创建脚本 v1.0")
     print("=" * 70)
 
+    # 0. 初始化邮箱服务提供者
+    provider = EmailProviderFactory.create('chatgpt')
+    print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
+    print(f"   🔗 页面地址: {provider.get_page_url()}")
+
     # 1. 创建窗口（使用SOCKS5代理，不设置platform和url）
     browser_id = BitBrowserAPI.create_window(
         name="Augment注册",
@@ -1404,10 +1271,10 @@ def main():
     cdp = CDPClient(ws_url)
 
     try:
-        # 先打开邮箱页面
+        # 先打开邮箱页面（使用provider的URL）
         print("   📧 打开邮箱页面...")
         result = cdp.send("Target.createTarget", {
-            "url": "https://mail.chatgpt.org.uk/"
+            "url": provider.get_page_url()
         })
         if result and "result" in result:
             print("   ✓ 邮箱页面已打开")
@@ -1435,16 +1302,16 @@ def main():
         cdp.close()
 
     # 5. 获取邮箱地址
-    email = get_email_from_browser(ws_url)
+    email = get_email_from_browser(ws_url, provider)
 
     # 6. 保存邮箱地址
     if email:
         EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
-        filename = EmailUtils.save_email_to_file(email)
+        filename = provider.save_email_to_file(email)
         if filename:
             print(f"\n✅ 邮箱获取成功！")
             print(f"   邮箱地址: {email}")
-            print(f"   访问链接: https://mail.chatgpt.org.uk/{email}")
+            print(f"   访问链接: {provider.get_access_url(email)}")
             print(f"   保存文件: {filename}")
     else:
         print("\n⚠️  未能自动获取邮箱地址")
@@ -1461,7 +1328,7 @@ def main():
 
     # 8. 获取验证码并填写
     if email:
-        code_success = fill_verification_code(ws_url, email)
+        code_success = fill_verification_code(ws_url, email, provider)
         if code_success:
             print("\n✅ 验证码已自动填写!")
         else:
