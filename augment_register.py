@@ -25,6 +25,8 @@
 import json
 import time
 import re
+import subprocess
+import os
 from datetime import datetime
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -826,6 +828,57 @@ def wait_for_onboard_redirect(ws_url, max_wait_seconds=60):
         cdp.close()
 
 
+def open_url_in_chrome(url, incognito=True):
+    """使用Chrome浏览器打开URL
+
+    Args:
+        url (str): 要打开的URL
+        incognito (bool): 是否使用无痕模式，默认为True
+
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print(f"\n🌐 正在使用Chrome浏览器打开链接...")
+    print(f"   🔗 链接: {url}")
+    print(f"   🕵️  无痕模式: {'是' if incognito else '否'}")
+
+    # Chrome可能的安装路径
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+    ]
+
+    # 查找Chrome路径
+    chrome_path = None
+    for path in chrome_paths:
+        if os.path.exists(path):
+            chrome_path = path
+            print(f"   ✓ 找到Chrome: {path}")
+            break
+
+    if not chrome_path:
+        print("   ✗ 未找到Chrome浏览器")
+        print("   💡 提示: 请确保已安装Chrome浏览器")
+        return False
+
+    try:
+        # 构建命令
+        cmd = [chrome_path]
+        if incognito:
+            cmd.append("--incognito")
+        cmd.append(url)
+
+        # 启动Chrome
+        subprocess.Popen(cmd)
+        print("   ✓ Chrome浏览器已启动")
+        return True
+
+    except Exception as e:
+        print(f"   ✗ 启动Chrome失败: {e}")
+        return False
+
+
 def get_payment_method_link(ws_url):
     """从onboard页面点击Add Payment Method按钮并获取跳转链接
 
@@ -1355,6 +1408,9 @@ def main():
                 payment_link_success = True
             except Exception as e:
                 print(f"   ⚠️  保存链接失败: {e}")
+
+            # 使用Chrome无痕模式打开链接
+            open_url_in_chrome(payment_link, incognito=True)
         else:
             print("\n⚠️  支付方法链接获取失败")
             print("   💡 提示: 可能需要等待页面加载或手动查找")
