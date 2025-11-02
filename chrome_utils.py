@@ -52,7 +52,7 @@ def find_chrome_path():
     return None
 
 
-def get_chrome_ws_url(port, max_retries=10, retry_delay=0.5):
+def get_chrome_ws_url(port, max_retries=15, retry_delay=0.5):
     """从Chrome调试端口获取WebSocket地址
     
     Args:
@@ -78,8 +78,13 @@ def get_chrome_ws_url(port, max_retries=10, retry_delay=0.5):
                     if ws_url:
                         print(f"   ✓ 获取成功: {ws_url}")
                         return ws_url
-            
-            print(f"   ⚠️  未找到page类型的target，重试中... ({i+1}/{max_retries})")
+
+            # 未找到page，等待后重试
+            if i < max_retries - 1:
+                print(f"   ⚠️  未找到page类型的target，等待后重试... ({i+1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                print(f"   ✗ 未找到page类型的target（已重试{max_retries}次）")
             
         except (URLError, HTTPError) as e:
             if i < max_retries - 1:

@@ -31,7 +31,7 @@ from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 from bitbrowser_api import BitBrowserAPI, CDPClient, human_delay
 from providers import EmailProviderFactory
-from chrome_utils import open_url_in_chrome, open_chrome_with_extension
+from chrome_utils import open_url_in_chrome
 
 
 
@@ -1382,8 +1382,16 @@ def main():
             except Exception as e:
                 print(f"   ⚠️  保存链接失败: {e}")
 
-            # 使用Chrome无痕模式打开链接,并打开扩展
-            open_chrome_with_extension(payment_link, "pkpkidlacejcllendmjnfcjdohkjpnae")
+            # 使用Chrome无痕模式打开链接
+            print("\n🌐 正在使用Chrome打开支付链接...")
+            print("   💡 提示: Chrome启动后，请手动点击扩展图标")
+            success = open_url_in_chrome(payment_link, incognito=True)
+            if success:
+                print("   ✓ Chrome已启动")
+                print("   🧩 请在Chrome中手动点击扩展图标进行操作")
+            else:
+                print("   ✗ 启动Chrome失败")
+                print("   💡 提示: 请手动打开链接")
         else:
             print("\n⚠️  支付方法链接获取失败")
             print("   💡 提示: 可能需要等待页面加载或手动查找")
