@@ -1133,6 +1133,18 @@ def get_session_cookie(ws_url):
                 session_value = value
                 print(f"   ✓ 找到session cookie!")
                 print(f"   📝 Session值: {session_value}")
+
+                # 复制到剪切板
+                try:
+                    import pyperclip
+                    pyperclip.copy(session_value)
+                    print(f"   📋 Session已复制到剪切板!")
+                except ImportError:
+                    print(f"   ⚠️  pyperclip未安装，无法复制到剪切板")
+                    print(f"   💡 提示: 运行 pip install pyperclip 安装")
+                except Exception as e:
+                    print(f"   ⚠️  复制到剪切板失败: {e}")
+
                 break
 
         if not session_value:
