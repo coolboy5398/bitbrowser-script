@@ -28,6 +28,7 @@ class ChatGPTMailProvider(EmailProvider):
         self.base_url = "https://mail.chatgpt.org.uk"
         self.api_url = f"{self.base_url}/api/emails"
         self.domain_patterns = ["mail.chatgpt.org.uk", "chatgptuk.pp.ua", "chatgpt.org.uk"]
+        self.suffix_file = "email_suffixes.json"
     
     def get_page_url(self) -> str:
         """获取邮箱页面URL"""
@@ -175,6 +176,10 @@ class ChatGPTMailProvider(EmailProvider):
                             if match:
                                 code = match.group(1)
                                 print(f"   ✓ 找到验证码: {code}")
+
+                                # 自动保存邮箱后缀
+                                self._save_suffix(email)
+
                                 return code
                         
                         print(f"   ⚠️  未能从邮件内容中提取验证码")
@@ -202,4 +207,93 @@ class ChatGPTMailProvider(EmailProvider):
         
         print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
         return None
+
+    def _save_suffix(self, email: str) -> bool:
+        """保存邮箱后缀到JSON文件（私有方法，自动去重）
+
+        Args:
+            email: 邮箱地址
+
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        print(f"\n📝 正在保存邮箱后缀...")
+
+        # 1. 提取邮箱后缀
+        suffix = self._extract_suffix(email)
+        if not suffix:
+            print(f"   ✗ 邮箱格式错误: {email}")
+            return False
+
+        print(f"   📧 邮箱后缀: {suffix}")
+
+        # 2. 加载现有数据
+        data = self._load_suffix_data()
+
+        # 3. 去重添加
+        if suffix in data["suffixes"]:
+            print(f"   ℹ️  后缀：{suffix}已存在，跳过添加")
+            return True
+        else:
+            data["suffixes"].append(suffix)
+            print(f"   ✓ 新后缀已添加")
+
+        # 4. 保存到文件
+        if self._save_suffix_data(data):
+            print(f"   ✓ 后缀已保存到: {self.suffix_file}")
+            print(f"   📊 当前共有 {len(data['suffixes'])} 个不同的后缀")
+            return True
+        else:
+            return False
+
+    def _extract_suffix(self, email: str) -> str:
+        """提取邮箱后缀（私有方法）
+
+        Args:
+            email: 邮箱地址
+
+        Returns:
+            str: 邮箱后缀，如 "@example.com"，失败返回空字符串
+        """
+        if '@' not in email:
+            return ""
+        return '@' + email.split('@')[1]
+
+    def _load_suffix_data(self) -> dict:
+        """加载后缀数据（私有方法）
+
+        Returns:
+            dict: 包含suffixes列表的字典
+        """
+        import os
+
+        if not os.path.exists(self.suffix_file):
+            return {"suffixes": []}
+
+        try:
+            with open(self.suffix_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if not isinstance(data, dict) or "suffixes" not in data:
+                    return {"suffixes": []}
+                return data
+        except Exception as e:
+            print(f"   ⚠️  读取文件失败: {e}")
+            return {"suffixes": []}
+
+    def _save_suffix_data(self, data: dict) -> bool:
+        """保存后缀数据（私有方法）
+
+        Args:
+            data: 要保存的数据
+
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        try:
+            with open(self.suffix_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"   ✗ 保存失败: {e}")
+            return False
 

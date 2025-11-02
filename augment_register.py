@@ -29,7 +29,6 @@ from datetime import datetime
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote
-from email_utils import EmailUtils
 from bitbrowser_api import BitBrowserAPI, CDPClient, human_delay
 from providers import EmailProviderFactory
 
@@ -1304,9 +1303,7 @@ def main():
     # 5. 获取邮箱地址
     email = get_email_from_browser(ws_url, provider)
 
-    # 6. 保存邮箱后缀
     if email:
-        EmailUtils.save_suffix(email)  # 保存邮箱后缀到JSON文件
         print(f"\n✅ 邮箱获取成功！")
         print(f"   邮箱地址: {email}")
     else:

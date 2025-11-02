@@ -5,14 +5,13 @@
 提供邮箱相关的实用工具方法
 
 功能：
-    - 保存邮箱后缀到JSON文件（自动去重）
     - 获取所有已保存的邮箱后缀
     - 统计邮箱后缀数量
     - 生成随机邮箱地址（单个或批量）
     - 未来可扩展更多邮箱相关功能
 
 作者: AI Assistant
-版本: 1.1
+版本: 1.2
 """
 
 import json
@@ -23,14 +22,11 @@ import string
 
 class EmailUtils:
     """邮箱相关工具类
-    
+
     提供静态方法处理邮箱相关操作，无需实例化即可使用
-    
+
     示例:
         >>> from email_utils import EmailUtils
-        >>>
-        >>> # 保存邮箱后缀
-        >>> EmailUtils.save_suffix("test@example.com")
         >>>
         >>> # 获取所有后缀
         >>> suffixes = EmailUtils.get_all_suffixes()
@@ -51,51 +47,6 @@ class EmailUtils:
         >>> print(emails)
         ['a1b2c3d4@example.com', 'x9y8z7w6@gmail.com', ...]
     """
-    
-    @staticmethod
-    def save_suffix(email, filename='email_suffixes.json'):
-        """保存邮箱后缀到JSON文件（自动去重）
-        
-        Args:
-            email (str): 邮箱地址，如 "test@example.com"
-            filename (str): JSON文件名，默认为 'email_suffixes.json'
-        
-        Returns:
-            bool: 成功返回True，失败返回False
-        
-        Example:
-            >>> EmailUtils.save_suffix("user@gmail.com")
-            True
-        """
-        print(f"\n📝 正在保存邮箱后缀...")
-        
-        # 1. 提取邮箱后缀
-        suffix = EmailUtils._extract_suffix(email)
-        if not suffix:
-            print(f"   ✗ 邮箱格式错误: {email}")
-            return False
-        
-        print(f"   📧 邮箱后缀: {suffix}")
-        
-        # 2. 加载现有数据
-        data = EmailUtils._load_data(filename)
-        
-        # 3. 去重添加
-        if suffix in data["suffixes"]:
-            print(f"   ℹ️  后缀：{suffix}已存在，跳过添加")
-            return True
-        else:
-            data["suffixes"].append(suffix)
-            print(f"   ✓ 新后缀已添加")
-        
-        # 4. 保存到文件
-        if EmailUtils._save_data(filename, data):
-            print(f"   ✓ 后缀已保存到: {filename}")
-            print(f"   📊 当前共有 {len(data['suffixes'])} 个不同的后缀")
-            return True
-        else:
-            return False
-    
     @staticmethod
     def get_all_suffixes(filename='email_suffixes.json'):
         """获取所有已保存的邮箱后缀
@@ -210,27 +161,7 @@ class EmailUtils:
         return emails
     
     # ==================== 私有辅助方法 ====================
-    
-    @staticmethod
-    def _extract_suffix(email):
-        """从邮箱地址中提取后缀
-        
-        Args:
-            email (str): 邮箱地址
-        
-        Returns:
-            str: 邮箱后缀（包含@），如 "@example.com"
-                 如果格式错误返回None
-        """
-        if not email or '@' not in email:
-            return None
-        
-        parts = email.split('@')
-        if len(parts) != 2 or not parts[1]:
-            return None
-        
-        return '@' + parts[1]
-    
+
     @staticmethod
     def _load_data(filename):
         """从JSON文件加载数据
@@ -259,25 +190,6 @@ class EmailUtils:
         except Exception as e:
             print(f"   ✗ 读取文件失败: {e}")
             return {"suffixes": []}
-    
-    @staticmethod
-    def _save_data(filename, data):
-        """保存数据到JSON文件
-
-        Args:
-            filename (str): JSON文件名
-            data (dict): 要保存的数据
-
-        Returns:
-            bool: 成功返回True，失败返回False
-        """
-        try:
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"   ✗ 保存失败: {e}")
-            return False
 
     @staticmethod
     def _generate_username(length=8, use_numbers=True, use_dots=False):
