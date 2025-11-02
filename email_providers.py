@@ -231,7 +231,7 @@ class ChatGPTMailProvider(EmailProvider):
                 
                 # 查找来自 support@augmentcode.com 的邮件
                 for email_data in emails:
-                    from_addr = email_data.get('from', '')
+                    from_addr = email_data.get('from_address', '')
                     subject = email_data.get('subject', '')
                     content = email_data.get('content', '')
                     
