@@ -48,7 +48,13 @@ def get_email_from_browser(ws_url, provider):
     Returns:
         str: 邮箱地址，失败返回None
     """
-    print(f"\n🔍 正在从页面获取邮箱地址...")
+    print(f"\n🔍 正在获取邮箱地址...")
+
+    # 检查是否需要打开浏览器页面
+    if not provider.needs_browser_page():
+        print("   ℹ️  该邮箱服务不需要打开页面，直接通过API创建...")
+        # 直接调用provider的方法获取邮箱（不需要cdp和session_id）
+        return provider.get_email_from_page(None, None)
 
     cdp = CDPClient(ws_url)
 

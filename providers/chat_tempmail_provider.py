@@ -38,7 +38,11 @@ class ChatTempMailProvider(EmailProvider):
 
         # 缓存邮箱ID映射 {email_address: email_id}
         self.email_id_cache = {}
-    
+
+    def needs_browser_page(self) -> bool:
+        """ChatTempMail不需要打开浏览器页面,直接通过API创建邮箱"""
+        return False
+
     def get_page_url(self) -> str:
         """获取邮箱页面URL"""
         return f"{self.base_url}/"
