@@ -47,8 +47,8 @@ class ChatGPTMailProvider(EmailProvider):
         
         # 构建域名匹配条件
         domain_checks = " || ".join([f"text.includes('{domain}')" for domain in self.domain_patterns])
-        
-        max_retries = 3
+
+        max_retries = 10
         for attempt in range(max_retries):
             if attempt > 0:
                 print(f"   🔄 第 {attempt + 1} 次尝试...")

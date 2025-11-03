@@ -1259,8 +1259,8 @@ def main():
     print("=" * 70)
 
     # 0. 初始化邮箱服务提供者
-    # provider = EmailProviderFactory.create('chatgpt')
-    provider = EmailProviderFactory.create('chat-tempmail', api_key='mk_UTCVqjR7yXgqvKtWPPsSW2YNFE76NpMr')
+    provider = EmailProviderFactory.create('chatgpt')
+    # provider = EmailProviderFactory.create('chat-tempmail', api_key='mk_UTCVqjR7yXgqvKtWPPsSW2YNFE76NpMr')
     print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
 
