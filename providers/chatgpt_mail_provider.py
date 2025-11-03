@@ -26,96 +26,57 @@ class ChatGPTMailProvider(EmailProvider):
     
     def __init__(self):
         self.base_url = "https://mail.chatgpt.org.uk"
+        self.generate_api_url = f"{self.base_url}/api/generate-email"
         self.api_url = f"{self.base_url}/api/emails"
-        self.domain_patterns = ["mail.chatgpt.org.uk", "chatgptuk.pp.ua", "chatgpt.org.uk"]
-        self.suffix_file = "email_suffixes.json"
-    
+
+    def needs_browser_page(self) -> bool:
+        """ChatGPT邮箱不需要打开浏览器页面,直接通过API创建邮箱"""
+        return False
+
     def get_page_url(self) -> str:
         """获取邮箱页面URL"""
         return f"{self.base_url}/"
-    
+
     def get_domain_patterns(self) -> list:
-        """获取域名匹配模式"""
-        return self.domain_patterns
-    
-    def get_email_from_page(self, cdp, session_id) -> str:
-        """从页面获取邮箱地址
-        
-        使用JavaScript在页面中查找邮箱地址
+        """获取域名匹配模式
+
+        由于使用API直接创建邮箱，不需要识别页面，返回空列表
         """
-        print("   🔍 步骤5: 查找邮箱地址...")
-        
-        # 构建域名匹配条件
-        domain_checks = " || ".join([f"text.includes('{domain}')" for domain in self.domain_patterns])
+        return []
 
-        max_retries = 10
-        for attempt in range(max_retries):
-            if attempt > 0:
-                print(f"   🔄 第 {attempt + 1} 次尝试...")
-                from bitbrowser_api import human_delay
-                human_delay(2.0)
-            
-            # 使用JavaScript查找邮箱
-            result = cdp.send("Runtime.evaluate", {
-                "expression": f"""
-                    (() => {{
-                        // 方法1: 查找所有包含@的文本节点
-                        const walker = document.createTreeWalker(
-                            document.body,
-                            NodeFilter.SHOW_TEXT,
-                            null,
-                            false
-                        );
+    def get_email_from_page(self, cdp, session_id) -> str:
+        """通过API创建并获取邮箱地址
 
-                        let node;
-                        while(node = walker.nextNode()) {{
-                            const text = node.textContent.trim();
-                            if (text.includes('@') && ({domain_checks})) {{
-                                // 使用正则提取邮箱
-                                const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}/);
-                                if (match) {{
-                                    return match[0];
-                                }}
-                            }}
-                        }}
+        不需要从页面获取,直接调用API创建新邮箱
+        """
+        print("   🔍 步骤5: 通过API创建邮箱...")
 
-                        // 方法2: 查找特定的元素
-                        const selectors = [
-                            'input[type="text"]',
-                            'input[readonly]',
-                            'div[class*="email"]',
-                            'span[class*="email"]',
-                            'p',
-                            'div'
-                        ];
+        try:
+            # 调用API创建邮箱
+            req = Request(self.generate_api_url)
+            req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
 
-                        for (const selector of selectors) {{
-                            const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {{
-                                const text = el.textContent || el.value || '';
-                                if (text.includes('@') && ({domain_checks})) {{
-                                    const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{{2,}}/);
-                                    if (match) {{
-                                        return match[0];
-                                    }}
-                                }}
-                            }}
-                        }}
+            response = urlopen(req, timeout=10)
+            data = json.loads(response.read().decode('utf-8'))
 
-                        return null;
-                    }})()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-            
-            if result and "result" in result and "result" in result["result"]:
-                email = result["result"]["result"].get("value")
-                if email:
-                    print(f"   ✓ 找到邮箱地址: {email}")
-                    return email
-        
-        print("   ✗ 未找到邮箱地址")
-        return None
+            # 提取邮箱地址
+            email = data.get('email')
+            if email:
+                print(f"   ✓ 创建邮箱成功: {email}")
+                return email
+            else:
+                print("   ✗ API响应中没有email字段")
+                return None
+
+        except HTTPError as e:
+            print(f"   ✗ HTTP错误: {e.code} {e.reason}")
+            return None
+        except URLError as e:
+            print(f"   ✗ 网络错误: {e.reason}")
+            return None
+        except Exception as e:
+            print(f"   ✗ 创建邮箱出错: {e}")
+            return None
     
     def get_verification_code(self, email: str) -> str:
         """从临时邮箱API获取验证码"""
@@ -176,10 +137,6 @@ class ChatGPTMailProvider(EmailProvider):
                             if match:
                                 code = match.group(1)
                                 print(f"   ✓ 找到验证码: {code}")
-
-                                # 自动保存邮箱后缀
-                                self._save_suffix(email)
-
                                 return code
                         
                         print(f"   ⚠️  未能从邮件内容中提取验证码")
@@ -208,92 +165,5 @@ class ChatGPTMailProvider(EmailProvider):
         print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
         return None
 
-    def _save_suffix(self, email: str) -> bool:
-        """保存邮箱后缀到JSON文件（私有方法，自动去重）
 
-        Args:
-            email: 邮箱地址
-
-        Returns:
-            bool: 成功返回True，失败返回False
-        """
-        print(f"\n📝 正在保存邮箱后缀...")
-
-        # 1. 提取邮箱后缀
-        suffix = self._extract_suffix(email)
-        if not suffix:
-            print(f"   ✗ 邮箱格式错误: {email}")
-            return False
-
-        print(f"   📧 邮箱后缀: {suffix}")
-
-        # 2. 加载现有数据
-        data = self._load_suffix_data()
-
-        # 3. 去重添加
-        if suffix in data["suffixes"]:
-            print(f"   ℹ️  后缀：{suffix}已存在，跳过添加")
-            return True
-        else:
-            data["suffixes"].append(suffix)
-            print(f"   ✓ 新后缀已添加")
-
-        # 4. 保存到文件
-        if self._save_suffix_data(data):
-            print(f"   ✓ 后缀已保存到: {self.suffix_file}")
-            print(f"   📊 当前共有 {len(data['suffixes'])} 个不同的后缀")
-            return True
-        else:
-            return False
-
-    def _extract_suffix(self, email: str) -> str:
-        """提取邮箱后缀（私有方法）
-
-        Args:
-            email: 邮箱地址
-
-        Returns:
-            str: 邮箱后缀，如 "@example.com"，失败返回空字符串
-        """
-        if '@' not in email:
-            return ""
-        return '@' + email.split('@')[1]
-
-    def _load_suffix_data(self) -> dict:
-        """加载后缀数据（私有方法）
-
-        Returns:
-            dict: 包含suffixes列表的字典
-        """
-        import os
-
-        if not os.path.exists(self.suffix_file):
-            return {"suffixes": []}
-
-        try:
-            with open(self.suffix_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if not isinstance(data, dict) or "suffixes" not in data:
-                    return {"suffixes": []}
-                return data
-        except Exception as e:
-            print(f"   ⚠️  读取文件失败: {e}")
-            return {"suffixes": []}
-
-    def _save_suffix_data(self, data: dict) -> bool:
-        """保存后缀数据（私有方法）
-
-        Args:
-            data: 要保存的数据
-
-        Returns:
-            bool: 成功返回True，失败返回False
-        """
-        try:
-            with open(self.suffix_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"   ✗ 保存失败: {e}")
-            return False
 
