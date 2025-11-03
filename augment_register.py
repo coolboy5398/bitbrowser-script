@@ -1254,6 +1254,9 @@ def fill_verification_code(ws_url, email, provider):
 
 def main():
     """主函数 - 演示如何使用脚本"""
+    # 记录开始时间
+    start_time = time.time()
+
     print("=" * 70)
     print("比特浏览器窗口创建脚本 v1.0")
     print("=" * 70)
@@ -1401,8 +1404,20 @@ def main():
     if email:
         session = get_session_cookie(ws_url)
         if session:
+            # 计算总耗时
+            end_time = time.time()
+            total_seconds = end_time - start_time
+
             print(f"\n✅ Session cookie获取成功!")
             print(f"   📝 Session值: {session}")
+
+            # 显示总耗时
+            if total_seconds >= 60:
+                minutes = int(total_seconds // 60)
+                seconds = total_seconds % 60
+                print(f"   ⏱️  总耗时: {minutes}分{seconds:.1f}秒")
+            else:
+                print(f"   ⏱️  总耗时: {total_seconds:.1f}秒")
 
             # 保存session到文件
             session_filename = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
