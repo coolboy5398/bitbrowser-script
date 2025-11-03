@@ -113,15 +113,16 @@ class ChatTempMailProvider(EmailProvider):
                 
                 print(f"   ✓ 找到 {len(messages)} 封邮件")
                 
-                # 查找来自 augmentcode.com 的邮件
+                # 查找来自 Augment 的邮件（通过发件服务器或主题识别）
                 for msg in messages:
                     from_addr = msg.get('from_address', '')
                     subject = msg.get('subject', '')
                     msg_id = msg.get('id', '')
-                    
+
                     print(f"   📧 邮件: {from_addr} - {subject}")
-                    
-                    if 'augmentcode.com' in from_addr.lower():
+
+                    # 检查是否为 Augment 邮件（AWS SES 发送或主题包含 Augment）
+                    if 'amazonses.com' in from_addr.lower() or 'augment' in subject.lower():
                         print(f"   ✓ 找到Augment邮件")
                         
                         # 获取邮件详情
@@ -170,11 +171,11 @@ class ChatTempMailProvider(EmailProvider):
             if not name:
                 name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
-            # 如果没有指定域名,获取可用域名列表
+            # 如果没有指定域名,获取可用域名列表并随机选择
             if not domain:
                 domains = self._get_available_domains()
                 if domains:
-                    domain = domains[0]  # 使用第一个可用域名
+                    domain = random.choice(domains)  # 随机选择一个可用域名
                 else:
                     domain = "chat-tempmail.com"  # 默认域名
 
@@ -348,10 +349,11 @@ class ChatTempMailProvider(EmailProvider):
         # 合并文本和HTML内容
         full_content = content + ' ' + html
 
-        # 验证码匹配模式
+        # 验证码匹配模式（按优先级排序，更具体的模式优先）
         patterns = [
+            r'verification code is:\s*<b>(\d{6})</b>',  # HTML格式优先
             r'verification code is:\s*(\d{6})',
-            r'verification code is:\s*<b>(\d{6})</b>',
+            r'code is:\s*<b>(\d{6})</b>',
             r'code is:\s*(\d{6})',
             r'code:\s*(\d{6})',
             r'验证码[：:]\s*(\d{6})',
