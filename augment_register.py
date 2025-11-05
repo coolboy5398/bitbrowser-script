@@ -1428,6 +1428,31 @@ def main():
                 session_success = True
             except Exception as e:
                 print(f"   ⚠️  保存session失败: {e}")
+
+            # 打开 atm://import?session=xxx URL
+            print(f"\n🔗 正在打开导入链接...")
+            import_url = f"atm://import?session={session}"
+            print(f"   📋 导入URL: {import_url}")
+
+            # 使用CDP在浏览器中打开URL
+            cdp = CDPClient(ws_url)
+            try:
+                result = cdp.send("Target.createTarget", {
+                    "url": import_url
+                })
+                if result and "result" in result:
+                    print(f"   ✓ 导入链接已在浏览器中打开")
+                else:
+                    print(f"   ⚠️  在浏览器中打开失败，尝试使用系统默认方式...")
+                    # 备选方案：使用系统默认方式打开
+                    import webbrowser
+                    webbrowser.open(import_url)
+                    print(f"   ✓ 已使用系统默认方式打开")
+            except Exception as e:
+                print(f"   ⚠️  打开导入链接失败: {e}")
+                print(f"   💡 提示: 请手动打开链接: {import_url}")
+            finally:
+                cdp.close()
         else:
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
