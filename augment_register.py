@@ -1444,13 +1444,13 @@ def main():
                 print(f"   📝 API响应: {result}")
             except HTTPError as e:
                 print(f"   ⚠️  HTTP错误: {e.code} - {e.reason}")
-                print(f"   💡 提示: 请确保Augment服务正在运行")
+                print(f"   💡 提示: 请确保ATM服务正在运行")
             except URLError as e:
                 print(f"   ⚠️  连接错误: {e.reason}")
-                print(f"   💡 提示: 请确保Augment服务正在运行")
+                print(f"   💡 提示: 请确保ATM服务正在运行")
             except Exception as e:
                 print(f"   ⚠️  API调用失败: {e}")
-                print(f"   💡 提示: 请确保Augment服务正在运行")
+                print(f"   💡 提示: 请确保ATM服务正在运行")
         else:
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
