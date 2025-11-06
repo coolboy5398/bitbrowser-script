@@ -274,16 +274,29 @@ def click_cloudflare_verify(cdp, session_id):
     return True
 
 
-def get_verification_code_from_email(email, provider):
-    """从临时邮箱API获取验证码
+def get_verification_code_from_email(email, provider, ws_url=None):
+    """从临时邮箱获取验证码
+
+    优先使用页面读取方式，如果不支持则降级到API方式
 
     Args:
         email: 邮箱地址
         provider (EmailProvider): 邮箱服务提供者
+        ws_url: WebSocket地址（可选），如果提供则尝试从页面读取
 
     Returns:
         str: 验证码，失败返回None
     """
+    # 优先尝试从页面读取（如果provider支持且提供了ws_url）
+    if ws_url and hasattr(provider, 'get_verification_code_from_page'):
+        print("   💡 使用页面读取方式获取验证码...")
+        code = provider.get_verification_code_from_page(ws_url, email)
+        if code:
+            return code
+        print("   ⚠️  页面读取失败，尝试降级到API方式...")
+
+    # 降级到API方式
+    print("   💡 使用API方式获取验证码...")
     return provider.get_verification_code(email)
 
 
@@ -1127,8 +1140,8 @@ def fill_verification_code(ws_url, email, provider):
     """
     print(f"\n🔐 正在获取并填写验证码...")
 
-    # 1. 获取验证码
-    verification_code = get_verification_code_from_email(email, provider)
+    # 1. 获取验证码（传递ws_url以支持页面读取）
+    verification_code = get_verification_code_from_email(email, provider, ws_url)
 
     if not verification_code:
         print("   ✗ 未能获取验证码")
@@ -1433,24 +1446,50 @@ def main():
             print(f"\n🔗 正在通过API导入session...")
             try:
                 url = "http://127.0.0.1:8766/api/import/session"
-                data = json.dumps({"session": session}).encode("utf-8")
+                payload = {"session": session}
                 headers = {"Content-Type": "application/json"}
 
-                req = Request(url, data=data, headers=headers, method="POST")
-                response = urlopen(req, timeout=10)
-                result = json.loads(response.read().decode("utf-8"))
+                print(f"   📤 请求URL: {url}")
+                print(f"   📤 Session长度: {len(session)} 字符")
 
+                # 将字典转换为JSON字节
+                json_data = json.dumps(payload).encode("utf-8")
+
+                req = Request(url, data=json_data, headers=headers, method="POST")
+                response = urlopen(req, timeout=10)
+
+                # 读取响应
+                response_data = response.read().decode("utf-8")
+                print(f"   📥 响应状态码: {response.getcode()}")
+                print(f"   📥 响应内容: {response_data}")
+
+                result = json.loads(response_data)
                 print(f"   ✓ Session导入成功!")
                 print(f"   📝 API响应: {result}")
+
             except HTTPError as e:
                 print(f"   ⚠️  HTTP错误: {e.code} - {e.reason}")
-                print(f"   💡 提示: 请确保ATM服务正在运行")
+                # 尝试读取错误响应体
+                try:
+                    error_body = e.read().decode("utf-8")
+                    print(f"   � 错误响应: {error_body}")
+                except:
+                    pass
+                print(f"   �💡 提示: 请检查API端点是否正确")
+
             except URLError as e:
                 print(f"   ⚠️  连接错误: {e.reason}")
-                print(f"   💡 提示: 请确保ATM服务正在运行")
+                print(f"   💡 提示: 请确保ATM服务正在运行在端口8766")
+
+            except json.JSONDecodeError as e:
+                print(f"   ⚠️  JSON解析错误: {e}")
+                print(f"   💡 提示: 服务器返回的不是有效的JSON")
+
             except Exception as e:
                 print(f"   ⚠️  API调用失败: {e}")
-                print(f"   💡 提示: 请确保ATM服务正在运行")
+                import traceback
+                traceback.print_exc()
+                print(f"   💡 提示: 请检查服务是否正常运行")
         else:
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
