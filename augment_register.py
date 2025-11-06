@@ -1429,30 +1429,28 @@ def main():
             except Exception as e:
                 print(f"   ⚠️  保存session失败: {e}")
 
-            # 打开 atm://import?session=xxx URL
-            print(f"\n🔗 正在打开导入链接...")
-            import_url = f"atm://import?session={session}"
-            print(f"   📋 导入URL: {import_url}")
-
-            # 使用CDP在浏览器中打开URL
-            cdp = CDPClient(ws_url)
+            # 调用API导入session
+            print(f"\n🔗 正在通过API导入session...")
             try:
-                result = cdp.send("Target.createTarget", {
-                    "url": import_url
-                })
-                if result and "result" in result:
-                    print(f"   ✓ 导入链接已在浏览器中打开")
-                else:
-                    print(f"   ⚠️  在浏览器中打开失败，尝试使用系统默认方式...")
-                    # 备选方案：使用系统默认方式打开
-                    import webbrowser
-                    webbrowser.open(import_url)
-                    print(f"   ✓ 已使用系统默认方式打开")
+                url = "http://127.0.0.1:8766/api/import/session"
+                data = json.dumps({"session": session}).encode("utf-8")
+                headers = {"Content-Type": "application/json"}
+
+                req = Request(url, data=data, headers=headers, method="POST")
+                response = urlopen(req, timeout=10)
+                result = json.loads(response.read().decode("utf-8"))
+
+                print(f"   ✓ Session导入成功!")
+                print(f"   📝 API响应: {result}")
+            except HTTPError as e:
+                print(f"   ⚠️  HTTP错误: {e.code} - {e.reason}")
+                print(f"   💡 提示: 请确保Augment服务正在运行")
+            except URLError as e:
+                print(f"   ⚠️  连接错误: {e.reason}")
+                print(f"   💡 提示: 请确保Augment服务正在运行")
             except Exception as e:
-                print(f"   ⚠️  打开导入链接失败: {e}")
-                print(f"   💡 提示: 请手动打开链接: {import_url}")
-            finally:
-                cdp.close()
+                print(f"   ⚠️  API调用失败: {e}")
+                print(f"   💡 提示: 请确保Augment服务正在运行")
         else:
             print("\n⚠️  Session cookie获取失败")
             print("   💡 提示: 可能需要等待更长时间或手动获取")
