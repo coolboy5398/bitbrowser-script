@@ -26,9 +26,7 @@ import json
 import time
 import re
 from datetime import datetime
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
-from urllib.parse import quote
+import requests
 from bitbrowser_api import BitBrowserAPI, CDPClient, human_delay
 from providers import EmailProviderFactory
 from chrome_utils import open_url_in_chrome
@@ -1446,40 +1444,51 @@ def main():
             print(f"\n🔗 正在通过API导入session...")
             try:
                 url = "http://127.0.0.1:8766/api/import/session"
-                payload = {"session": session}
-                headers = {"Content-Type": "application/json"}
+
+                # 完全模仿Postman的方式：手动序列化JSON
+                payload = json.dumps({"session": session})
+                headers = {
+                    "Content-Type": "application/json"
+                }
 
                 print(f"   📤 请求URL: {url}")
                 print(f"   📤 Session长度: {len(session)} 字符")
 
-                # 将字典转换为JSON字节
-                json_data = json.dumps(payload).encode("utf-8")
+                # 使用Postman导出的方式：data参数 + 字符串payload
+                response = requests.request(
+                    "POST",
+                    url,
+                    headers=headers,
+                    data=payload,
+                    timeout=30
+                )
 
-                req = Request(url, data=json_data, headers=headers, method="POST")
-                response = urlopen(req, timeout=10)
+                print(f"   📥 响应状态码: {response.status_code}")
+                print(f"   📥 响应内容: {response.text}")
 
-                # 读取响应
-                response_data = response.read().decode("utf-8")
-                print(f"   📥 响应状态码: {response.getcode()}")
-                print(f"   📥 响应内容: {response_data}")
+                # 检查响应状态
+                response.raise_for_status()
 
-                result = json.loads(response_data)
+                result = response.json()
                 print(f"   ✓ Session导入成功!")
                 print(f"   📝 API响应: {result}")
 
-            except HTTPError as e:
-                print(f"   ⚠️  HTTP错误: {e.code} - {e.reason}")
-                # 尝试读取错误响应体
+            except requests.exceptions.HTTPError as e:
+                print(f"   ⚠️  HTTP错误: {e.response.status_code}")
                 try:
-                    error_body = e.read().decode("utf-8")
-                    print(f"   � 错误响应: {error_body}")
+                    error_body = e.response.text
+                    print(f"   📄 错误响应: {error_body}")
                 except:
                     pass
-                print(f"   �💡 提示: 请检查API端点是否正确")
+                print(f"   💡 提示: 请检查API端点是否正确")
 
-            except URLError as e:
-                print(f"   ⚠️  连接错误: {e.reason}")
+            except requests.exceptions.ConnectionError as e:
+                print(f"   ⚠️  连接错误: {e}")
                 print(f"   💡 提示: 请确保ATM服务正在运行在端口8766")
+
+            except requests.exceptions.Timeout as e:
+                print(f"   ⚠️  请求超时: {e}")
+                print(f"   💡 提示: API响应时间过长，请检查服务状态")
 
             except json.JSONDecodeError as e:
                 print(f"   ⚠️  JSON解析错误: {e}")
