@@ -617,47 +617,60 @@ def fill_verification_code(ws_url, email, provider):
         cdp.send("Runtime.enable", {}, session_id=session_id)
         cdp.send("DOM.enable", {}, session_id=session_id)
 
-        # 7. 查找并填写验证码输入框
+        # 7. 查找并填写验证码输入框（Windsurf 使用 6 个独立输入框）
         print("   ✍️  填写验证码...")
 
-        selectors = [
-            'input[type="text"]',
-            'input[type="number"]',
-            'input[name*="code"]',
-            'input[name*="verification"]',
-            'input[placeholder*="code"]',
-            'input[placeholder*="verification"]',
-            'input[id*="code"]',
-            'input[id*="verification"]',
-        ]
+        # Windsurf 验证码页面使用 6 个独立的输入框
+        # 需要将验证码拆分成单个字符，分别填入每个输入框
+        result = cdp.send("Runtime.evaluate", {
+            "expression": f"""
+                (() => {{
+                    // 查找所有验证码输入框
+                    const inputs = document.querySelectorAll('input[type="text"]');
+                    
+                    // 验证码字符串
+                    const code = '{verification_code}';
+                    
+                    // 检查是否找到 6 个输入框
+                    if (inputs.length < 6) {{
+                        return {{ success: false, message: 'Found ' + inputs.length + ' inputs, expected 6' }};
+                    }}
+                    
+                    // 将验证码拆分并填入每个输入框
+                    for (let i = 0; i < 6 && i < code.length; i++) {{
+                        const input = inputs[i];
+                        
+                        // 聚焦输入框
+                        input.focus();
+                        
+                        // 设置值并触发 React 的 setter
+                        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                        nativeInputValueSetter.call(input, code[i]);
+                        
+                        // 触发所有必要的事件
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new KeyboardEvent('keydown', {{ key: code[i], bubbles: true }}));
+                        input.dispatchEvent(new KeyboardEvent('keyup', {{ key: code[i], bubbles: true }}));
+                    }}
+                    
+                    return {{ success: true, message: 'Filled 6 inputs' }};
+                }})()
+            """,
+            "returnByValue": True
+        }, session_id=session_id)
 
-        filled = False
-        for selector in selectors:
-            result = cdp.send("Runtime.evaluate", {
-                "expression": f"""
-                    (() => {{
-                        const input = document.querySelector('{selector}');
-                        if (input) {{
-                            input.value = '{verification_code}';
-                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                            input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                            return true;
-                        }}
-                        return false;
-                    }})()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                success = result["result"]["result"].get("value")
-                if success:
-                    print(f"   ✓ 成功填写验证码: {verification_code}")
-                    filled = True
-                    break
-
-        if not filled:
-            print("   ⚠️  未找到验证码输入框")
+        if result and "result" in result and "result" in result["result"]:
+            result_data = result["result"]["result"].get("value")
+            if result_data and result_data.get("success"):
+                print(f"   ✓ 成功填写验证码: {verification_code}")
+                print(f"   ℹ️  {result_data.get('message')}")
+            else:
+                error_msg = result_data.get("message") if result_data else "Unknown error"
+                print(f"   ✗ 填写验证码失败: {error_msg}")
+                return False
+        else:
+            print("   ✗ 未能执行验证码填写脚本")
             return False
 
         # 8. 点击提交按钮
@@ -665,7 +678,8 @@ def fill_verification_code(ws_url, email, provider):
         human_delay(2.0)
 
         print("   ➡️  点击提交按钮...")
-        submit_success = click_button_by_text(cdp, session_id, ["Verify", "Continue", "Submit", "Confirm"])
+        # Windsurf 验证码页面的按钮是 "Create account"
+        submit_success = click_button_by_text(cdp, session_id, ["Create account", "Verify", "Continue", "Submit", "Confirm"])
         if submit_success:
             print("   ✓ 提交按钮已点击")
         else:
@@ -1071,9 +1085,6 @@ def main():
         else:
             print(f"   ⏱️  总耗时: {total_seconds:.1f}秒")
 
-        # 自动关闭窗口
-        print("\n🔒 自动关闭浏览器窗口...")
-        BitBrowserAPI.close_window(browser_id)
         print("\n✨ 所有操作完成！")
     else:
         print("\n⚠️  注册流程未完成")
