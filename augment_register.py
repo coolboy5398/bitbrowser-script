@@ -286,9 +286,9 @@ def get_verification_code_from_email(email, provider, ws_url=None):
         str: 验证码，失败返回None
     """
     # 优先尝试从页面读取（如果provider支持且提供了ws_url）
-    if ws_url and hasattr(provider, 'get_verification_code_from_page'):
+    if ws_url and hasattr(provider, 'get_verification_code_augment'):
         print("   💡 使用页面读取方式获取验证码...")
-        code = provider.get_verification_code_from_page(ws_url, email)
+        code = provider.get_verification_code_augment(ws_url, email)
         if code:
             return code
         print("   ⚠️  页面读取失败，尝试降级到API方式...")

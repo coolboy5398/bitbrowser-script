@@ -604,7 +604,201 @@ class ChatGPTMailProvider(EmailProvider):
         print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
         return None
 
-    def get_verification_code_from_page(self, ws_url, email: str) -> str:
+    def get_verification_code_windsurf(self, ws_url, email: str) -> str:
+        """从邮箱页面直接获取Windsurf验证码
+
+        Args:
+            ws_url: WebSocket地址
+            email: 邮箱地址
+
+        Returns:
+            str: 验证码，失败返回None
+        """
+        print(f"\n📧 正在从邮箱页面获取Windsurf验证码...")
+        print(f"   📮 邮箱地址: {email}")
+
+        from bitbrowser_api import CDPClient, human_delay
+        import time
+
+        # 1. 连接到浏览器
+        cdp = CDPClient(ws_url)
+
+        try:
+            # 2. 查找邮箱页面
+            print("   🔍 查找邮箱页面...")
+            result = cdp.send("Target.getTargets", {})
+            if not result or "result" not in result:
+                print("   ✗ 无法获取 targets")
+                return None
+
+            targets = result["result"]["targetInfos"]
+
+            # 查找邮箱页面
+            email_target = None
+            for target in targets:
+                if target.get("type") == "page":
+                    url = target.get("url", "")
+                    if "chatgpt.org.uk" in url:
+                        email_target = target
+                        print(f"   ✓ 找到邮箱页面: {url}")
+                        break
+
+            if not email_target:
+                print("   ✗ 未找到邮箱页面")
+                print("   💡 提示: 邮箱页面可能已关闭")
+                return None
+
+            target_id = email_target["targetId"]
+
+            # 3. 激活页面
+            print("   🎯 激活邮箱页面...")
+            cdp.send("Target.activateTarget", {"targetId": target_id})
+            human_delay(1.0)
+
+            # 4. 附加到 target
+            result = cdp.send("Target.attachToTarget", {
+                "targetId": target_id,
+                "flatten": True
+            })
+
+            if not result or "result" not in result:
+                print("   ✗ 无法附加到 target")
+                return None
+
+            session_id = result["result"]["sessionId"]
+
+            # 5. 启用必要的域
+            cdp.send("Runtime.enable", {}, session_id=session_id)
+            cdp.send("DOM.enable", {}, session_id=session_id)
+
+            # 6. 等待邮件到达并提取验证码
+            print("   ⏳ 等待邮件到达...")
+            max_retries = 20  # 最多等待60秒（20次 x 3秒）
+
+            for attempt in range(max_retries):
+                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
+
+                try:
+                    # 使用JavaScript查找邮件和验证码
+                    result = cdp.send("Runtime.evaluate", {
+                        "expression": """
+                            (() => {
+                                // 查找所有可能包含邮件的元素
+                                const emailElements = document.querySelectorAll(
+                                    'div[class*="email"], div[class*="message"], ' +
+                                    'div[class*="mail"], li[class*="email"], ' +
+                                    'tr[class*="email"], .email-item, .message-item'
+                                );
+
+                                // 遍历所有邮件元素
+                                for (const el of emailElements) {
+                                    const text = el.textContent || el.innerText || '';
+
+                                    // 检查是否来自 Windsurf/Exafunction
+                                    if (text.includes('windsurf') || 
+                                        text.includes('Windsurf') ||
+                                        text.includes('exafunction') ||
+                                        text.includes('Exafunction')) {
+
+                                        // 优先查找 <h1 class="code"> 标签中的验证码
+                                        const codeElement = el.querySelector('h1.code');
+                                        if (codeElement) {
+                                            const code = codeElement.textContent.trim();
+                                            if (/^[0-9]{6}$/.test(code)) {
+                                                return code;
+                                            }
+                                        }
+
+                                        // 尝试提取验证码（6位数字）
+                                        const patterns = [
+                                            /following 6 digit code[:\\s]*([0-9]{6})/i,
+                                            /code[:\\s]*([0-9]{6})/i,
+                                            /([0-9]{6})/
+                                        ];
+
+                                        for (const pattern of patterns) {
+                                            const match = text.match(pattern);
+                                            if (match && match[1]) {
+                                                return match[1];
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 如果没找到，尝试直接在整个页面查找6位数字
+                                const bodyText = document.body.textContent || document.body.innerText;
+                                if (bodyText.includes('windsurf') || 
+                                    bodyText.includes('Windsurf') ||
+                                    bodyText.includes('exafunction')) {
+                                    
+                                    // 优先查找 <h1 class="code"> 标签
+                                    const codeElement = document.querySelector('h1.code');
+                                    if (codeElement) {
+                                        const code = codeElement.textContent.trim();
+                                        if (/^[0-9]{6}$/.test(code)) {
+                                            return code;
+                                        }
+                                    }
+                                    
+                                    // 最后尝试匹配任意6位数字
+                                    const match = bodyText.match(/([0-9]{6})/);
+                                    if (match && match[1]) {
+                                        return match[1];
+                                    }
+                                }
+
+                                return null;
+                            })()
+                        """,
+                        "returnByValue": True
+                    }, session_id=session_id)
+
+                    if result and "result" in result and "result" in result["result"]:
+                        code = result["result"]["result"].get("value")
+                        if code:
+                            print(f"   ✓ 找到验证码: {code}")
+                            return code
+
+                    print(f"   ⏳ 暂未找到验证码，等待3秒后重试...")
+                    human_delay(3.0)
+
+                except Exception as e:
+                    print(f"   ⚠️  检查出错: {e}")
+                    human_delay(3.0)
+
+            print(f"   ✗ 获取验证码超时（已尝试{max_retries}次）")
+            return None
+
+        except Exception as e:
+            print(f"   ✗ 获取验证码出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+        finally:
+            cdp.close()
+
+    def get_verification_code(self, email: str) -> str:
+        """从临时邮箱API获取验证码（已废弃，请使用专用方法）
+        
+        此方法保留用于向后兼容，但不推荐使用。
+        请使用：
+        - get_verification_code_augment(email) - 用于 Augment
+        - get_verification_code_windsurf(email) - 用于 Windsurf
+        
+        Args:
+            email: 邮箱地址
+            
+        Returns:
+            str: 验证码，失败返回None
+        """
+        print("\n   ⚠️  警告: get_verification_code 已废弃，请使用专用方法")
+        print("   💡 提示: 使用 get_verification_code_augment 或 get_verification_code_windsurf")
+        
+        # 默认尝试 Windsurf（因为这是新服务）
+        return self.get_verification_code_windsurf(email)
+
+    def get_verification_code_augment(self, ws_url, email: str) -> str:
         """从邮箱页面直接获取验证码（新实现）
 
         Args:
