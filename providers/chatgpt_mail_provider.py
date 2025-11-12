@@ -283,6 +283,52 @@ class ChatGPTMailProvider(EmailProvider):
             print(f"   ✗ 绕过Cloudflare出错: {e}")
             return False
 
+    def _click_refresh_button(self, cdp, session_id) -> bool:
+        """点击邮箱页面的刷新按钮
+
+        直接调用页面的 refreshEmails() JavaScript 函数来刷新邮件列表
+
+        Args:
+            cdp: CDPClient实例
+            session_id: CDP会话ID
+
+        Returns:
+            bool: True表示刷新成功，False表示失败
+        """
+        try:
+            print("   🔄 点击刷新按钮...")
+
+            # 直接调用页面的 refreshEmails() 函数
+            result = cdp.send("Runtime.evaluate", {
+                "expression": """
+                    (() => {
+                        // 检查函数是否存在
+                        if (typeof refreshEmails === 'function') {
+                            refreshEmails();
+                            return true;
+                        }
+                        return false;
+                    })()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                success = result["result"]["result"].get("value")
+                if success:
+                    print("   ✓ 刷新按钮点击成功")
+                    return True
+                else:
+                    print("   ⚠️  refreshEmails() 函数不存在")
+                    return False
+
+            print("   ⚠️  刷新按钮点击失败")
+            return False
+
+        except Exception as e:
+            print(f"   ⚠️  点击刷新按钮出错: {e}")
+            return False
+
     def _wait_for_email_element(self, cdp, session_id, timeout=30) -> bool:
         """智能等待邮箱元素出现
 
@@ -679,6 +725,12 @@ class ChatGPTMailProvider(EmailProvider):
                 print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
 
                 try:
+                    # 点击刷新按钮获取最新邮件
+                    self._click_refresh_button(cdp, session_id)
+
+                    # 等待邮件加载
+                    human_delay(2.0)
+
                     # 使用JavaScript查找邮件和验证码
                     result = cdp.send("Runtime.evaluate", {
                         "expression": """
@@ -873,6 +925,12 @@ class ChatGPTMailProvider(EmailProvider):
                 print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
 
                 try:
+                    # 点击刷新按钮获取最新邮件
+                    self._click_refresh_button(cdp, session_id)
+
+                    # 等待邮件加载
+                    human_delay(2.0)
+
                     # 使用JavaScript查找邮件和验证码
                     result = cdp.send("Runtime.evaluate", {
                         "expression": """
