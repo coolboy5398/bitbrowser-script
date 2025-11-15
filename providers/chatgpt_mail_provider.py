@@ -36,7 +36,7 @@ class ChatGPTMailProvider(EmailProvider):
 
     def needs_browser_page(self) -> bool:
         """ChatGPT邮箱需要打开浏览器页面获取邮箱"""
-        return True
+        return False
 
     def get_page_url(self) -> str:
         """获取邮箱页面URL"""
@@ -780,6 +780,7 @@ class ChatGPTMailProvider(EmailProvider):
 
                 # 发送HTTP请求
                 req = Request(api_url)
+                req.add_header('X-API-Key', self.api_key)         
                 req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
 
                 response = urlopen(req, timeout=10)

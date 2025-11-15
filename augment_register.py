@@ -50,8 +50,8 @@ def get_email_from_browser(ws_url, provider):
     # 检查是否需要打开浏览器页面
     if not provider.needs_browser_page():
         print("   ℹ️  该邮箱服务不需要打开页面，直接通过API创建...")
-        # 直接调用provider的方法获取邮箱（不需要cdp和session_id）
-        return provider.get_email_from_page(None, None)
+        # 直接调用API方法获取邮箱
+        return provider.get_email_from_api()
 
     cdp = CDPClient(ws_url)
 
@@ -273,9 +273,11 @@ def click_cloudflare_verify(cdp, session_id):
 
 
 def get_verification_code_from_email(email, provider, ws_url=None):
-    """从临时邮箱获取验证码
+    """从临时邮箱获取Augment验证码（新架构）
 
-    优先使用页面读取方式，如果不支持则降级到API方式
+    使用新的两步流程：
+    1. 获取最新邮件（从页面或API）
+    2. 解析Augment验证码
 
     Args:
         email: 邮箱地址
@@ -285,17 +287,62 @@ def get_verification_code_from_email(email, provider, ws_url=None):
     Returns:
         str: 验证码，失败返回None
     """
+    email_content = None
+
+    # 步骤1: 获取最新邮件
     # 优先尝试从页面读取（如果provider支持且提供了ws_url）
-    if ws_url and hasattr(provider, 'get_verification_code_augment'):
-        print("   💡 使用页面读取方式获取验证码...")
-        code = provider.get_verification_code_augment(ws_url, email)
-        if code:
-            return code
-        print("   ⚠️  页面读取失败，尝试降级到API方式...")
+    if ws_url and provider.needs_browser_page():
+        print("   💡 尝试从页面获取邮件...")
+
+        # 连接到浏览器获取session_id
+        cdp = CDPClient(ws_url)
+        try:
+            # 查找邮箱页面
+            result = cdp.send("Target.getTargets", {})
+            if result and "result" in result:
+                targets = result["result"]["targetInfos"]
+                domain_patterns = provider.get_domain_patterns()
+
+                for target in targets:
+                    if target.get("type") == "page":
+                        url = target.get("url", "")
+                        if any(pattern in url for pattern in domain_patterns):
+                            target_id = target["targetId"]
+
+                            # 附加到页面
+                            result = cdp.send("Target.attachToTarget", {
+                                "targetId": target_id,
+                                "flatten": True
+                            })
+
+                            if result and "result" in result:
+                                session_id = result["result"]["sessionId"]
+
+                                # 从页面获取邮件
+                                email_content = provider.get_latest_email_from_page(cdp, session_id, email)
+                                break
+        finally:
+            cdp.close()
+
+        if email_content:
+            print("   ✓ 从页面获取邮件成功")
+        else:
+            print("   ⚠️  页面读取失败，尝试降级到API方式...")
 
     # 降级到API方式
-    print("   💡 使用API方式获取验证码...")
-    return provider.get_verification_code(email)
+    if not email_content:
+        print("   💡 使用API方式获取邮件...")
+        email_content = provider.get_latest_email_from_api(email)
+
+    if not email_content:
+        print("   ✗ 未能获取邮件")
+        return None
+
+    # 步骤2: 解析Augment验证码
+    print("   🔍 解析Augment验证码...")
+    code = provider.parse_augment_code(email_content)
+
+    return code
 
 
 def click_continue_button(cdp, session_id):
@@ -1285,7 +1332,6 @@ def main():
     # provider = EmailProviderFactory.create('chat-tempmail', api_key='mk_UTCVqjR7yXgqvKtWPPsSW2YNFE76NpMr')
     print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
-
     # 1. 创建窗口（使用SOCKS5代理，不设置platform和url）
     browser_id = BitBrowserAPI.create_window(
         name="Augment注册",
