@@ -9,7 +9,6 @@ ChatTempMail临时邮箱服务提供者
 版本: 1.0
 """
 
-import re
 import json
 import time
 from urllib.request import urlopen, Request
@@ -51,12 +50,24 @@ class ChatTempMailProvider(EmailProvider):
         """获取域名匹配模式"""
         return self.domain_patterns
     
-    def get_email_from_page(self, cdp, session_id) -> str:
-        """通过API创建并获取邮箱地址
+    # ==================== 邮箱地址获取 ====================
 
-        不需要从页面获取,直接调用API创建新邮箱
+    def get_email_from_page(self, cdp, session_id) -> str:
+        """从网页提取邮箱地址
+
+        ChatTempMail不支持从网页提取,请使用get_email_from_api
         """
-        print("   🔍 步骤5: 通过API创建邮箱...")
+        print("   ⚠️  ChatTempMail不支持从网页提取邮箱")
+        print("   💡 请使用get_email_from_api()方法")
+        return None
+
+    def get_email_from_api(self) -> str:
+        """通过API获取邮箱地址
+
+        Returns:
+            str: 邮箱地址,失败返回None
+        """
+        print("   🔍 通过API创建邮箱...")
 
         try:
             # 调用API创建邮箱
@@ -72,85 +83,90 @@ class ChatTempMailProvider(EmailProvider):
         except Exception as e:
             print(f"   ✗ 创建邮箱出错: {e}")
             return None
-    
-    def get_verification_code(self, email: str) -> str:
-        """从ChatTempMail API获取验证码
-        
+
+    # ==================== 邮件内容获取 ====================
+
+    def get_latest_email_from_page(self, cdp, session_id, email: str) -> dict:
+        """从网页获取最新邮件内容
+
+        ChatTempMail不支持从网页获取,请使用get_latest_email_from_api
+        """
+        print("   ⚠️  ChatTempMail不支持从网页获取邮件")
+        print("   💡 请使用get_latest_email_from_api()方法")
+        return None
+
+    def get_latest_email_from_api(self, email: str) -> dict:
+        """通过API获取最新邮件内容
+
         Args:
             email: 邮箱地址
-            
+
         Returns:
-            str: 验证码,失败返回None
+            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
+                  失败返回None
         """
-        print(f"\n📧 正在从ChatTempMail获取验证码...")
+        print(f"\n📧 正在从ChatTempMail API获取最新邮件...")
         print(f"   📮 邮箱地址: {email}")
-        
+
         if not self.api_key:
             print("   ✗ 错误: 未设置API密钥")
             return None
-        
+
         # 1. 获取邮箱ID
         email_id = self._get_email_id(email)
         if not email_id:
             print("   ✗ 无法获取邮箱ID")
             return None
-        
+
         print(f"   ✓ 邮箱ID: {email_id}")
-        
+
         # 2. 轮询获取邮件
         max_retries = 10
         for attempt in range(max_retries):
             try:
                 print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-                
+
                 # 获取邮件列表
                 messages = self._get_messages(email_id)
-                
+
                 if not messages:
                     print(f"   ⏳ 暂无邮件,等待3秒后重试...")
                     time.sleep(3)
                     continue
-                
+
                 print(f"   ✓ 找到 {len(messages)} 封邮件")
-                
-                # 查找来自 Augment 的邮件（通过发件服务器或主题识别）
-                for msg in messages:
-                    from_addr = msg.get('from_address', '')
-                    subject = msg.get('subject', '')
-                    msg_id = msg.get('id', '')
 
-                    print(f"   📧 邮件: {from_addr} - {subject}")
+                # 获取最新邮件（第一封）
+                latest_msg = messages[0]
+                from_addr = latest_msg.get('from_address', '')
+                subject = latest_msg.get('subject', '')
+                msg_id = latest_msg.get('id', '')
 
-                    # 检查是否为 Augment 邮件（AWS SES 发送或主题包含 Augment）
-                    if 'amazonses.com' in from_addr.lower() or 'augment' in subject.lower():
-                        print(f"   ✓ 找到Augment邮件")
-                        
-                        # 获取邮件详情
-                        message_detail = self._get_message_detail(email_id, msg_id)
-                        if not message_detail:
-                            continue
-                        
-                        content = message_detail.get('content', '')
-                        html = message_detail.get('html', '')
-                        
-                        # 从内容中提取验证码
-                        code = self._extract_verification_code(content, html)
-                        if code:
-                            print(f"   ✓ 找到验证码: {code}")
-                            return code
-                        
-                        print(f"   ⚠️  未能从邮件内容中提取验证码")
-                
-                print(f"   ⚠️  未找到Augment邮件,等待3秒后重试...")
+                print(f"   📧 最新邮件: {from_addr} - {subject}")
+
+                # 获取邮件详情
+                message_detail = self._get_message_detail(email_id, msg_id)
+                if message_detail:
+                    return {
+                        'subject': subject,
+                        'content': message_detail.get('content', ''),
+                        'html': message_detail.get('html', ''),
+                        'from': from_addr
+                    }
+
+                print(f"   ⚠️  无法获取邮件详情,等待3秒后重试...")
                 time.sleep(3)
-                
+
             except Exception as e:
                 print(f"   ✗ 错误: {e}")
                 if attempt < max_retries - 1:
                     time.sleep(3)
-        
-        print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
+
+        print(f"   ✗ 获取邮件失败（已尝试{max_retries}次）")
         return None
+
+    # ==================== 验证码解析 ====================
+    # 使用基类的实现，无需重写
     
     def _create_email(self, name: str = None, expiry_time: int = 0, domain: str = None) -> str:
         """通过API创建新邮箱
@@ -336,34 +352,5 @@ class ChatTempMailProvider(EmailProvider):
             print(f"   ✗ 获取邮件详情失败: {e}")
             return None
 
-    def _extract_verification_code(self, content: str, html: str = '') -> str:
-        """从邮件内容中提取验证码
 
-        Args:
-            content: 纯文本内容
-            html: HTML内容
-
-        Returns:
-            str: 验证码,失败返回None
-        """
-        # 合并文本和HTML内容
-        full_content = content + ' ' + html
-
-        # 验证码匹配模式（按优先级排序，更具体的模式优先）
-        patterns = [
-            r'verification code is:\s*<b>(\d{6})</b>',  # HTML格式优先
-            r'verification code is:\s*(\d{6})',
-            r'code is:\s*<b>(\d{6})</b>',
-            r'code is:\s*(\d{6})',
-            r'code:\s*(\d{6})',
-            r'验证码[：:]\s*(\d{6})',
-            r'(\d{6})',  # 最后尝试匹配任意6位数字
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, full_content, re.IGNORECASE)
-            if match:
-                return match.group(1)
-
-        return None
 

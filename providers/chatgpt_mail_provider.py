@@ -9,7 +9,6 @@ ChatGPT临时邮箱服务提供者
 版本: 1.0
 """
 
-import re
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote
@@ -20,13 +19,20 @@ from .email_provider import EmailProvider
 
 class ChatGPTMailProvider(EmailProvider):
     """ChatGPT临时邮箱服务提供者
-    
+
     实现 https://mail.chatgpt.org.uk/ 临时邮箱服务
+    支持网页方式和API方式
     """
-    
-    def __init__(self):
+
+    def __init__(self, api_key: str = None):
+        """初始化ChatGPTMail服务
+
+        Args:
+            api_key: API密钥,如果不提供则使用测试密钥 'gpt-test'
+        """
         self.base_url = "https://mail.chatgpt.org.uk"
         self.api_url = f"{self.base_url}/api/emails"
+        self.api_key = api_key or "gpt-v9b4n2qwer"  # 默认使用测试密钥
 
     def needs_browser_page(self) -> bool:
         """ChatGPT邮箱需要打开浏览器页面获取邮箱"""
@@ -507,8 +513,10 @@ class ChatGPTMailProvider(EmailProvider):
             print(f"   ✗ 提取邮箱出错: {e}")
             return None
 
+    # ==================== 邮箱地址获取 ====================
+
     def get_email_from_page(self, cdp, session_id) -> str:
-        """从浏览器页面获取邮箱地址（增强版）
+        """从网页提取邮箱地址
 
         完整流程：
         1. 检测Cloudflare验证
@@ -523,16 +531,16 @@ class ChatGPTMailProvider(EmailProvider):
         Returns:
             str: 邮箱地址，失败返回None
         """
-        print("   🔍 步骤5: 从页面获取邮箱地址（增强版）...")
+        print("   🔍 从网页提取邮箱地址...")
 
         try:
             # 步骤1: 检测Cloudflare验证
-            print("\n   📋 步骤5.1: 检测Cloudflare验证")
+            print("\n   📋 步骤1: 检测Cloudflare验证")
             has_cloudflare = self._detect_cloudflare(cdp, session_id)
 
             # 步骤2: 如果有Cloudflare，尝试绕过
             if has_cloudflare:
-                print("\n   📋 步骤5.2: 绕过Cloudflare验证")
+                print("\n   📋 步骤2: 绕过Cloudflare验证")
                 if not self._bypass_cloudflare(cdp, session_id, timeout=30):
                     print("   ✗ Cloudflare绕过失败")
                     return None
@@ -541,13 +549,13 @@ class ChatGPTMailProvider(EmailProvider):
                 print("   ✓ 无需Cloudflare验证")
 
             # 步骤3: 等待邮箱元素出现
-            print("\n   📋 步骤5.3: 等待邮箱元素出现")
+            print("\n   📋 步骤3: 等待邮箱元素出现")
             if not self._wait_for_email_element(cdp, session_id, timeout=30):
                 print("   ✗ 邮箱元素未出现")
                 return None
 
             # 步骤4: 提取邮箱地址
-            print("\n   📋 步骤5.4: 提取邮箱地址")
+            print("\n   📋 步骤4: 提取邮箱地址")
             email = self._extract_email(cdp, session_id)
 
             if email:
@@ -562,75 +570,246 @@ class ChatGPTMailProvider(EmailProvider):
             import traceback
             traceback.print_exc()
             return None
+
+    def get_email_from_api(self) -> str:
+        """通过API获取邮箱地址
+
+        Returns:
+            str: 邮箱地址,失败返回None
+        """
+        print("   🔍 通过API生成邮箱...")
+
+        try:
+            # 调用API生成邮箱
+            url = f"{self.base_url}/api/generate-email"
+            req = Request(url, method='GET')
+            req.add_header('X-API-Key', self.api_key)
+            req.add_header('User-Agent', 'Mozilla/5.0')
+
+            response = urlopen(req, timeout=10)
+            data = json.loads(response.read().decode('utf-8'))
+
+            email = data.get('email')
+            if email:
+                print(f"   ✓ 生成邮箱成功: {email}")
+                return email
+            else:
+                print("   ✗ API响应中没有email字段")
+                return None
+
+        except HTTPError as e:
+            error_body = e.read().decode('utf-8') if e.fp else 'No error body'
+            print(f"   ✗ HTTP错误 {e.code}: {error_body}")
+            return None
+        except Exception as e:
+            print(f"   ✗ 生成邮箱失败: {type(e).__name__}: {e}")
+            return None
     
-    def get_verification_code(self, email: str) -> str:
-        """从临时邮箱API获取验证码"""
-        print(f"\n📧 正在从邮箱获取验证码...")
+    # ==================== 邮件内容获取 ====================
+
+    def _click_refresh_button(self, cdp, session_id) -> bool:
+        """点击刷新按钮获取最新邮件
+
+        Args:
+            cdp: CDPClient实例
+            session_id: CDP会话ID
+
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
+        try:
+            # 调用页面的refreshEmails函数
+            result = cdp.send("Runtime.evaluate", {
+                "expression": """
+                    (() => {
+                        if (typeof refreshEmails === 'function') {
+                            refreshEmails();
+                            return true;
+                        }
+                        return false;
+                    })()
+                """,
+                "returnByValue": True
+            }, session_id=session_id)
+
+            if result and "result" in result and "result" in result["result"]:
+                success = result["result"]["result"].get("value")
+                if success:
+                    return True
+
+            return False
+
+        except Exception as e:
+            print(f"   ⚠️  刷新按钮点击失败: {e}")
+            return False
+
+    def get_latest_email_from_page(self, cdp, session_id, email: str) -> dict:
+        """从网页获取最新邮件内容
+
+        Args:
+            cdp: CDPClient实例
+            session_id: CDP会话ID
+            email: 邮箱地址
+
+        Returns:
+            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
+                  失败返回None
+        """
+        print(f"   📧 从网页获取最新邮件...")
+
+        try:
+            from bitbrowser_api import human_delay
+
+            # 最多尝试20次，每次等待3秒
+            max_retries = 20
+
+            for attempt in range(max_retries):
+                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
+
+                try:
+                    # 点击刷新按钮
+                    self._click_refresh_button(cdp, session_id)
+
+                    # 等待邮件加载
+                    human_delay(2.0)
+
+                    # 使用JavaScript查找邮件
+                    result = cdp.send("Runtime.evaluate", {
+                        "expression": """
+                            (() => {
+                                // 查找所有可能包含邮件的元素
+                                const emailElements = document.querySelectorAll(
+                                    'div[class*="email"], div[class*="message"], ' +
+                                    'div[class*="mail"], li[class*="email"], ' +
+                                    'tr[class*="email"], .email-item, .message-item'
+                                );
+
+                                // 遍历所有邮件元素，查找Augment或Windsurf邮件
+                                for (const el of emailElements) {
+                                    const text = el.textContent || el.innerText || '';
+                                    const html = el.innerHTML || '';
+
+                                    // 检查是否来自Augment或Windsurf
+                                    if (text.includes('augmentcode.com') ||
+                                        text.includes('support@augment') ||
+                                        text.includes('Augment') ||
+                                        text.includes('windsurf') ||
+                                        text.includes('Windsurf') ||
+                                        text.includes('exafunction')) {
+
+                                        // 提取发件人
+                                        let from = '';
+                                        const fromMatch = text.match(/From[:\\s]+([^\\n]+)/i) ||
+                                                        text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
+                                        if (fromMatch) {
+                                            from = fromMatch[1].trim();
+                                        }
+
+                                        // 提取主题
+                                        let subject = '';
+                                        const subjectMatch = text.match(/Subject[:\\s]+([^\\n]+)/i);
+                                        if (subjectMatch) {
+                                            subject = subjectMatch[1].trim();
+                                        } else if (text.includes('Augment')) {
+                                            subject = 'Augment Verification';
+                                        } else if (text.includes('Windsurf') || text.includes('windsurf')) {
+                                            subject = 'Windsurf Verification';
+                                        }
+
+                                        return {
+                                            subject: subject,
+                                            content: text,
+                                            html: html,
+                                            from: from
+                                        };
+                                    }
+                                }
+
+                                return null;
+                            })()
+                        """,
+                        "returnByValue": True
+                    }, session_id=session_id)
+
+                    if result and "result" in result and "result" in result["result"]:
+                        email_data = result["result"]["result"].get("value")
+                        if email_data:
+                            print(f"   ✓ 找到邮件: {email_data.get('subject', 'No Subject')}")
+                            return email_data
+
+                    print(f"   ⏳ 暂未找到邮件，等待3秒后重试...")
+                    human_delay(3.0)
+
+                except Exception as e:
+                    print(f"   ⚠️  检查出错: {e}")
+                    human_delay(3.0)
+
+            print(f"   ✗ 获取邮件超时（已尝试{max_retries}次）")
+            return None
+
+        except Exception as e:
+            print(f"   ✗ 获取邮件出错: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def get_latest_email_from_api(self, email: str) -> dict:
+        """通过API获取最新邮件内容
+
+        Args:
+            email: 邮箱地址
+
+        Returns:
+            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
+                  失败返回None
+        """
+        print(f"\n📧 正在从ChatGPT API获取最新邮件...")
         print(f"   📮 邮箱地址: {email}")
-        
+
         # URL编码邮箱地址
         encoded_email = quote(email)
         api_url = f"{self.api_url}?email={encoded_email}"
-        
+
         print(f"   🔗 API地址: {api_url}")
-        
+
         # 最多尝试10次,每次间隔3秒
         max_retries = 10
         for attempt in range(max_retries):
             try:
                 print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-                
+
                 # 发送HTTP请求
                 req = Request(api_url)
                 req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                
+
                 response = urlopen(req, timeout=10)
                 data = json.loads(response.read().decode('utf-8'))
-                
+
                 # 检查是否有邮件
                 if not data.get('emails'):
                     print(f"   ⏳ 暂无邮件,等待3秒后重试...")
                     from bitbrowser_api import human_delay
                     human_delay(3.0)
                     continue
-                
+
                 emails = data['emails']
                 print(f"   ✓ 找到 {len(emails)} 封邮件")
-                
-                # 查找来自 support@augmentcode.com 的邮件
-                for email_data in emails:
-                    from_addr = email_data.get('from_address', '')
-                    subject = email_data.get('subject', '')
-                    content = email_data.get('content', '')
-                    
-                    print(f"   📧 邮件: {from_addr} - {subject}")
-                    
-                    if 'augmentcode.com' in from_addr.lower():
-                        print(f"   ✓ 找到Augment邮件")
-                        
-                        # 从内容中提取验证码
-                        patterns = [
-                            r'verification code is:\s*(\d{6})',
-                            r'verification code is:\s*<b>(\d{6})</b>',
-                            r'code is:\s*(\d{6})',
-                            r'code:\s*(\d{6})',
-                            r'(\d{6})',  # 最后尝试匹配任意6位数字
-                        ]
-                        
-                        for pattern in patterns:
-                            match = re.search(pattern, content, re.IGNORECASE)
-                            if match:
-                                code = match.group(1)
-                                print(f"   ✓ 找到验证码: {code}")
-                                return code
-                        
-                        print(f"   ⚠️  未能从邮件内容中提取验证码")
-                        print(f"   📄 邮件内容预览: {content[:200]}...")
-                
-                print(f"   ⚠️  未找到Augment邮件,等待3秒后重试...")
-                from bitbrowser_api import human_delay
-                human_delay(3.0)
-                
+
+                # 获取最新邮件（第一封）
+                latest_email = emails[0]
+                from_addr = latest_email.get('from_address', '')
+                subject = latest_email.get('subject', '')
+                content = latest_email.get('content', '')
+
+                print(f"   📧 最新邮件: {from_addr} - {subject}")
+
+                return {
+                    'subject': subject,
+                    'content': content,
+                    'html': '',  # API不提供HTML内容
+                    'from': from_addr
+                }
+
             except HTTPError as e:
                 print(f"   ✗ HTTP错误: {e.code} {e.reason}")
                 if attempt < max_retries - 1:
@@ -646,367 +825,14 @@ class ChatGPTMailProvider(EmailProvider):
                 if attempt < max_retries - 1:
                     from bitbrowser_api import human_delay
                     human_delay(3.0)
-        
-        print(f"   ✗ 获取验证码失败（已尝试{max_retries}次）")
+
+        print(f"   ✗ 获取邮件失败（已尝试{max_retries}次）")
         return None
 
-    def get_verification_code_windsurf(self, ws_url, email: str) -> str:
-        """从邮箱页面直接获取Windsurf验证码
+    # ==================== 验证码解析 ====================
+    # 使用基类的实现，无需重写
 
-        Args:
-            ws_url: WebSocket地址
-            email: 邮箱地址
 
-        Returns:
-            str: 验证码，失败返回None
-        """
-        print(f"\n📧 正在从邮箱页面获取Windsurf验证码...")
-        print(f"   📮 邮箱地址: {email}")
-
-        from bitbrowser_api import CDPClient, human_delay
-        import time
-
-        # 1. 连接到浏览器
-        cdp = CDPClient(ws_url)
-
-        try:
-            # 2. 查找邮箱页面
-            print("   🔍 查找邮箱页面...")
-            result = cdp.send("Target.getTargets", {})
-            if not result or "result" not in result:
-                print("   ✗ 无法获取 targets")
-                return None
-
-            targets = result["result"]["targetInfos"]
-
-            # 查找邮箱页面
-            email_target = None
-            for target in targets:
-                if target.get("type") == "page":
-                    url = target.get("url", "")
-                    if "chatgpt.org.uk" in url:
-                        email_target = target
-                        print(f"   ✓ 找到邮箱页面: {url}")
-                        break
-
-            if not email_target:
-                print("   ✗ 未找到邮箱页面")
-                print("   💡 提示: 邮箱页面可能已关闭")
-                return None
-
-            target_id = email_target["targetId"]
-
-            # 3. 激活页面
-            print("   🎯 激活邮箱页面...")
-            cdp.send("Target.activateTarget", {"targetId": target_id})
-            human_delay(1.0)
-
-            # 4. 附加到 target
-            result = cdp.send("Target.attachToTarget", {
-                "targetId": target_id,
-                "flatten": True
-            })
-
-            if not result or "result" not in result:
-                print("   ✗ 无法附加到 target")
-                return None
-
-            session_id = result["result"]["sessionId"]
-
-            # 5. 启用必要的域
-            cdp.send("Runtime.enable", {}, session_id=session_id)
-            cdp.send("DOM.enable", {}, session_id=session_id)
-
-            # 6. 等待邮件到达并提取验证码
-            print("   ⏳ 等待邮件到达...")
-            max_retries = 20  # 最多等待60秒（20次 x 3秒）
-
-            for attempt in range(max_retries):
-                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-
-                try:
-                    # 点击刷新按钮获取最新邮件
-                    self._click_refresh_button(cdp, session_id)
-
-                    # 等待邮件加载
-                    human_delay(2.0)
-
-                    # 使用JavaScript查找邮件和验证码
-                    result = cdp.send("Runtime.evaluate", {
-                        "expression": """
-                            (() => {
-                                // 查找所有可能包含邮件的元素
-                                const emailElements = document.querySelectorAll(
-                                    'div[class*="email"], div[class*="message"], ' +
-                                    'div[class*="mail"], li[class*="email"], ' +
-                                    'tr[class*="email"], .email-item, .message-item'
-                                );
-
-                                // 遍历所有邮件元素
-                                for (const el of emailElements) {
-                                    const text = el.textContent || el.innerText || '';
-
-                                    // 检查是否来自 Windsurf/Exafunction
-                                    if (text.includes('windsurf') || 
-                                        text.includes('Windsurf') ||
-                                        text.includes('exafunction') ||
-                                        text.includes('Exafunction')) {
-
-                                        // 优先查找 <h1 class="code"> 标签中的验证码
-                                        const codeElement = el.querySelector('h1.code');
-                                        if (codeElement) {
-                                            const code = codeElement.textContent.trim();
-                                            if (/^[0-9]{6}$/.test(code)) {
-                                                return code;
-                                            }
-                                        }
-
-                                        // 尝试提取验证码（6位数字）
-                                        const patterns = [
-                                            /following 6 digit code[:\\s]*([0-9]{6})/i,
-                                            /code[:\\s]*([0-9]{6})/i,
-                                            /([0-9]{6})/
-                                        ];
-
-                                        for (const pattern of patterns) {
-                                            const match = text.match(pattern);
-                                            if (match && match[1]) {
-                                                return match[1];
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 如果没找到，尝试直接在整个页面查找6位数字
-                                const bodyText = document.body.textContent || document.body.innerText;
-                                if (bodyText.includes('windsurf') || 
-                                    bodyText.includes('Windsurf') ||
-                                    bodyText.includes('exafunction')) {
-                                    
-                                    // 优先查找 <h1 class="code"> 标签
-                                    const codeElement = document.querySelector('h1.code');
-                                    if (codeElement) {
-                                        const code = codeElement.textContent.trim();
-                                        if (/^[0-9]{6}$/.test(code)) {
-                                            return code;
-                                        }
-                                    }
-                                    
-                                    // 最后尝试匹配任意6位数字
-                                    const match = bodyText.match(/([0-9]{6})/);
-                                    if (match && match[1]) {
-                                        return match[1];
-                                    }
-                                }
-
-                                return null;
-                            })()
-                        """,
-                        "returnByValue": True
-                    }, session_id=session_id)
-
-                    if result and "result" in result and "result" in result["result"]:
-                        code = result["result"]["result"].get("value")
-                        if code:
-                            print(f"   ✓ 找到验证码: {code}")
-                            return code
-
-                    print(f"   ⏳ 暂未找到验证码，等待3秒后重试...")
-                    human_delay(3.0)
-
-                except Exception as e:
-                    print(f"   ⚠️  检查出错: {e}")
-                    human_delay(3.0)
-
-            print(f"   ✗ 获取验证码超时（已尝试{max_retries}次）")
-            return None
-
-        except Exception as e:
-            print(f"   ✗ 获取验证码出错: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-        finally:
-            cdp.close()
-
-    def get_verification_code(self, email: str) -> str:
-        """从临时邮箱API获取验证码（已废弃，请使用专用方法）
-        
-        此方法保留用于向后兼容，但不推荐使用。
-        请使用：
-        - get_verification_code_augment(email) - 用于 Augment
-        - get_verification_code_windsurf(email) - 用于 Windsurf
-        
-        Args:
-            email: 邮箱地址
-            
-        Returns:
-            str: 验证码，失败返回None
-        """
-        print("\n   ⚠️  警告: get_verification_code 已废弃，请使用专用方法")
-        print("   💡 提示: 使用 get_verification_code_augment 或 get_verification_code_windsurf")
-        
-        # 默认尝试 Windsurf（因为这是新服务）
-        return self.get_verification_code_windsurf(email)
-
-    def get_verification_code_augment(self, ws_url, email: str) -> str:
-        """从邮箱页面直接获取验证码（新实现）
-
-        Args:
-            ws_url: WebSocket地址
-            email: 邮箱地址
-
-        Returns:
-            str: 验证码，失败返回None
-        """
-        print(f"\n📧 正在从邮箱页面获取验证码...")
-        print(f"   📮 邮箱地址: {email}")
-
-        from bitbrowser_api import CDPClient, human_delay
-        import time
-
-        # 1. 连接到浏览器
-        cdp = CDPClient(ws_url)
-
-        try:
-            # 2. 查找邮箱页面
-            print("   🔍 查找邮箱页面...")
-            result = cdp.send("Target.getTargets", {})
-            if not result or "result" not in result:
-                print("   ✗ 无法获取 targets")
-                return None
-
-            targets = result["result"]["targetInfos"]
-
-            # 查找邮箱页面
-            email_target = None
-            for target in targets:
-                if target.get("type") == "page":
-                    url = target.get("url", "")
-                    if "chatgpt.org.uk" in url:
-                        email_target = target
-                        print(f"   ✓ 找到邮箱页面: {url}")
-                        break
-
-            if not email_target:
-                print("   ✗ 未找到邮箱页面")
-                print("   💡 提示: 邮箱页面可能已关闭")
-                return None
-
-            target_id = email_target["targetId"]
-
-            # 3. 激活页面
-            print("   🎯 激活邮箱页面...")
-            cdp.send("Target.activateTarget", {"targetId": target_id})
-            human_delay(1.0)
-
-            # 4. 附加到 target
-            result = cdp.send("Target.attachToTarget", {
-                "targetId": target_id,
-                "flatten": True
-            })
-
-            if not result or "result" not in result:
-                print("   ✗ 无法附加到 target")
-                return None
-
-            session_id = result["result"]["sessionId"]
-
-            # 5. 启用必要的域
-            cdp.send("Runtime.enable", {}, session_id=session_id)
-            cdp.send("DOM.enable", {}, session_id=session_id)
-
-            # 6. 等待邮件到达并提取验证码
-            print("   ⏳ 等待邮件到达...")
-            max_retries = 20  # 最多等待60秒（20次 x 3秒）
-
-            for attempt in range(max_retries):
-                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-
-                try:
-                    # 点击刷新按钮获取最新邮件
-                    self._click_refresh_button(cdp, session_id)
-
-                    # 等待邮件加载
-                    human_delay(2.0)
-
-                    # 使用JavaScript查找邮件和验证码
-                    result = cdp.send("Runtime.evaluate", {
-                        "expression": """
-                            (() => {
-                                // 查找所有可能包含邮件的元素
-                                const emailElements = document.querySelectorAll(
-                                    'div[class*="email"], div[class*="message"], ' +
-                                    'div[class*="mail"], li[class*="email"], ' +
-                                    'tr[class*="email"], .email-item, .message-item'
-                                );
-
-                                // 遍历所有邮件元素
-                                for (const el of emailElements) {
-                                    const text = el.textContent || el.innerText || '';
-
-                                    // 检查是否来自augmentcode.com
-                                    if (text.includes('augmentcode.com') ||
-                                        text.includes('support@augment') ||
-                                        text.includes('Augment')) {
-
-                                        // 尝试提取验证码（6位数字）
-                                        const patterns = [
-                                            /verification code is[:\\s]*([0-9]{6})/i,
-                                            /code is[:\\s]*([0-9]{6})/i,
-                                            /code[:\\s]*([0-9]{6})/i,
-                                            /([0-9]{6})/
-                                        ];
-
-                                        for (const pattern of patterns) {
-                                            const match = text.match(pattern);
-                                            if (match && match[1]) {
-                                                return match[1];
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 如果没找到，尝试直接在整个页面查找6位数字
-                                const bodyText = document.body.textContent || document.body.innerText;
-                                if (bodyText.includes('augmentcode') || bodyText.includes('Augment')) {
-                                    const match = bodyText.match(/([0-9]{6})/);
-                                    if (match && match[1]) {
-                                        return match[1];
-                                    }
-                                }
-
-                                return null;
-                            })()
-                        """,
-                        "returnByValue": True
-                    }, session_id=session_id)
-
-                    if result and "result" in result and "result" in result["result"]:
-                        code = result["result"]["result"].get("value")
-                        if code:
-                            print(f"   ✓ 找到验证码: {code}")
-                            return code
-
-                    print(f"   ⏳ 暂未找到验证码，等待3秒后重试...")
-                    human_delay(3.0)
-
-                except Exception as e:
-                    print(f"   ⚠️  检查出错: {e}")
-                    human_delay(3.0)
-
-            print(f"   ✗ 获取验证码超时（已尝试{max_retries}次）")
-            return None
-
-        except Exception as e:
-            print(f"   ✗ 获取验证码出错: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-        finally:
-            cdp.close()
 
 
 

@@ -9,6 +9,7 @@
 版本: 1.0
 """
 
+import re
 from abc import ABC, abstractmethod
 
 
@@ -44,9 +45,11 @@ class EmailProvider(ABC):
         """
         pass
 
+    # ==================== 邮箱地址获取 ====================
+
     @abstractmethod
     def get_email_from_page(self, cdp, session_id) -> str:
-        """从页面获取邮箱地址
+        """从网页提取邮箱地址
 
         Args:
             cdp: CDPClient实例
@@ -58,14 +61,139 @@ class EmailProvider(ABC):
         pass
 
     @abstractmethod
-    def get_verification_code(self, email: str) -> str:
-        """获取验证码
+    def get_email_from_api(self) -> str:
+        """通过API获取邮箱地址
+
+        Returns:
+            str: 邮箱地址,失败返回None
+        """
+        pass
+
+    # ==================== 邮件内容获取 ====================
+
+    @abstractmethod
+    def get_latest_email_from_page(self, cdp, session_id, email: str) -> dict:
+        """从网页获取最新邮件内容
+
+        Args:
+            cdp: CDPClient实例
+            session_id: CDP会话ID
+            email: 邮箱地址
+
+        Returns:
+            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
+                  失败返回None
+        """
+        pass
+
+    @abstractmethod
+    def get_latest_email_from_api(self, email: str) -> dict:
+        """通过API获取最新邮件内容
 
         Args:
             email: 邮箱地址
 
         Returns:
-            str: 验证码,失败返回None
+            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
+                  失败返回None
         """
         pass
+
+    # ==================== 验证码解析 ====================
+
+    def parse_augment_code(self, email_content: dict) -> str:
+        """从邮件内容中解析Augment验证码
+
+        Args:
+            email_content: 邮件内容字典
+
+        Returns:
+            str: 验证码,失败返回None
+        """
+        if not email_content:
+            return None
+
+        from_addr = email_content.get('from', '')
+        subject = email_content.get('subject', '')
+
+        # 检查是否为 Augment 邮件（AWS SES 发送或主题包含 Augment）
+        if 'amazonses.com' not in from_addr.lower() and 'augment' not in subject.lower():
+            print("   ⚠️  不是Augment邮件")
+            return None
+
+        print(f"   ✓ 识别为Augment邮件")
+
+        content = email_content.get('content', '')
+        html = email_content.get('html', '')
+
+        # 合并文本和HTML内容
+        full_content = content + ' ' + html
+
+        # Augment验证码匹配模式（按优先级排序）
+        patterns = [
+            r'verification code is:\s*<b>(\d{6})</b>',  # HTML格式优先
+            r'verification code is:\s*(\d{6})',
+            r'code is:\s*<b>(\d{6})</b>',
+            r'code is:\s*(\d{6})',
+            r'code:\s*(\d{6})',
+            r'(\d{6})',  # 最后尝试匹配任意6位数字
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, full_content, re.IGNORECASE)
+            if match:
+                code = match.group(1)
+                print(f"   ✓ 找到Augment验证码: {code}")
+                return code
+
+        print(f"   ⚠️  未能从邮件内容中提取Augment验证码")
+        return None
+
+    def parse_windsurf_code(self, email_content: dict) -> str:
+        """从邮件内容中解析Windsurf验证码
+
+        Args:
+            email_content: 邮件内容字典
+
+        Returns:
+            str: 验证码,失败返回None
+        """
+        if not email_content:
+            return None
+
+        from_addr = email_content.get('from', '')
+        subject = email_content.get('subject', '')
+
+        # 检查是否为 Windsurf 邮件
+        if 'windsurf' not in from_addr.lower() and 'windsurf' not in subject.lower():
+            print("   ⚠️  不是Windsurf邮件")
+            return None
+
+        print(f"   ✓ 识别为Windsurf邮件")
+
+        content = email_content.get('content', '')
+        html = email_content.get('html', '')
+
+        # 合并文本和HTML内容
+        full_content = content + ' ' + html
+
+        # Windsurf验证码匹配模式（按优先级排序）
+        patterns = [
+            r'verification code[:\s]*<b>(\d{6})</b>',  # HTML格式
+            r'verification code[:\s]*(\d{6})',
+            r'code[:\s]*<b>(\d{6})</b>',
+            r'code[:\s]*(\d{6})',
+            r'验证码[：:]\s*(\d{6})',
+            r'(\d{6})',  # 最后尝试匹配任意6位数字
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, full_content, re.IGNORECASE)
+            if match:
+                code = match.group(1)
+                print(f"   ✓ 找到Windsurf验证码: {code}")
+                return code
+
+        print(f"   ⚠️  未能从邮件内容中提取Windsurf验证码")
+        return None
 
