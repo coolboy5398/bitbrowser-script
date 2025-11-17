@@ -46,7 +46,8 @@ def get_email_from_browser(ws_url, provider):
     # 检查是否需要打开浏览器页面
     if not provider.needs_browser_page():
         print("   ℹ️  该邮箱服务不需要打开页面，直接通过API创建...")
-        return provider.get_email_from_page(None, None)
+        # 直接调用API方法获取邮箱
+        return provider.get_email_from_api()
 
     cdp = CDPClient(ws_url)
 
@@ -60,7 +61,7 @@ def get_email_from_browser(ws_url, provider):
 
         targets = result["result"]["targetInfos"]
 
-        # 根据URL查找邮箱页面
+        # 根据URL查找邮箱页面（使用provider的域名模式）
         page_target = None
         domain_patterns = provider.get_domain_patterns()
 
@@ -68,6 +69,7 @@ def get_email_from_browser(ws_url, provider):
             if target.get("type") == "page":
                 url = target.get("url", "")
                 print(f"   📄 发现页面: {url}")
+                # 检查URL是否匹配任一域名模式
                 if any(pattern in url for pattern in domain_patterns):
                     page_target = target
                     print(f"   ✓ 找到邮箱页面!")
@@ -91,7 +93,7 @@ def get_email_from_browser(ws_url, provider):
         # 步骤2: 激活目标页面
         print("   🎯 步骤2: 激活邮箱页面...")
         cdp.send("Target.activateTarget", {"targetId": target_id})
-        human_delay(1.0)
+        human_delay(1.0)  # 等待激活完成（人类化延迟）
         print("   ✓ 页面已激活")
 
         # 步骤3: 附加到 target
@@ -113,6 +115,8 @@ def get_email_from_browser(ws_url, provider):
         cdp.send("Page.enable", {}, session_id=session_id)
         cdp.send("DOM.enable", {}, session_id=session_id)
         cdp.send("Runtime.enable", {}, session_id=session_id)
+
+        # 等待页面加载完成（人类化延迟）
         human_delay(3.0)
         print("   ✓ 页面加载完成")
 
@@ -241,28 +245,77 @@ def click_cloudflare_verify(cdp, session_id):
     return True
 
 
-def get_verification_code_from_email(email, provider, ws_url=None, service='windsurf'):
-    """从临时邮箱获取验证码
+def get_verification_code_from_email(email, provider, ws_url=None):
+    """从临时邮箱获取Windsurf验证码（新架构）
+
+    使用新的两步流程：
+    1. 获取最新邮件（从页面或API）
+    2. 解析Windsurf验证码
 
     Args:
         email: 邮箱地址
         provider (EmailProvider): 邮箱服务提供者
-        ws_url: WebSocket地址（可选）
-        service: 服务类型 ('windsurf' 或 'augment')
+        ws_url: WebSocket地址（可选），如果提供则尝试从页面读取
 
     Returns:
         str: 验证码，失败返回None
     """
-    # 优先尝试从页面读取
-    if ws_url and hasattr(provider, 'get_verification_code_windsurf'):
-        print("   💡 使用页面读取方式获取验证码...")
-        code = provider.get_verification_code_windsurf(ws_url, email)
-        if code:
-            return code
-        print("   ⚠️  页面读取失败，尝试降级到API方式...")
-    else:
-        # 兜底：使用通用方法
-        return provider.get_verification_code(email)
+    email_content = None
+
+    # 步骤1: 获取最新邮件
+    # 优先尝试从页面读取（如果provider支持且提供了ws_url）
+    if ws_url and provider.needs_browser_page():
+        print("   💡 尝试从页面获取邮件...")
+
+        # 连接到浏览器获取session_id
+        cdp = CDPClient(ws_url)
+        try:
+            # 查找邮箱页面
+            result = cdp.send("Target.getTargets", {})
+            if result and "result" in result:
+                targets = result["result"]["targetInfos"]
+                domain_patterns = provider.get_domain_patterns()
+
+                for target in targets:
+                    if target.get("type") == "page":
+                        url = target.get("url", "")
+                        if any(pattern in url for pattern in domain_patterns):
+                            target_id = target["targetId"]
+
+                            # 附加到页面
+                            result = cdp.send("Target.attachToTarget", {
+                                "targetId": target_id,
+                                "flatten": True
+                            })
+
+                            if result and "result" in result:
+                                session_id = result["result"]["sessionId"]
+
+                                # 从页面获取邮件
+                                email_content = provider.get_latest_email_from_page(cdp, session_id, email)
+                                break
+        finally:
+            cdp.close()
+
+        if email_content:
+            print("   ✓ 从页面获取邮件成功")
+        else:
+            print("   ⚠️  页面读取失败，尝试降级到API方式...")
+
+    # 降级到API方式
+    if not email_content:
+        print("   💡 使用API方式获取邮件...")
+        email_content = provider.get_latest_email_from_api(email)
+
+    if not email_content:
+        print("   ✗ 未能获取邮件")
+        return None
+
+    # 步骤2: 解析Windsurf验证码
+    print("   🔍 解析Windsurf验证码...")
+    code = provider.parse_windsurf_code(email_content)
+
+    return code
 
 
 def click_button_by_text(cdp, session_id, button_texts):
@@ -558,8 +611,8 @@ def fill_verification_code(ws_url, email, provider):
     """
     print(f"\n🔐 正在获取并填写验证码...")
 
-    # 1. 获取验证码（指定为 Windsurf 服务）
-    verification_code = get_verification_code_from_email(email, provider, ws_url, service='windsurf')
+    # 1. 获取验证码（传递ws_url以支持页面读取）
+    verification_code = get_verification_code_from_email(email, provider, ws_url)
 
     if not verification_code:
         print("   ✗ 未能获取验证码")
