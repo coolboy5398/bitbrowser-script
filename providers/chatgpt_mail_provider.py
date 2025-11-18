@@ -753,21 +753,21 @@ class ChatGPTMailProvider(EmailProvider):
             traceback.print_exc()
             return None
 
-    def get_latest_email_from_api(self, email: str) -> dict:
+    def get_latest_email_from_api(self, email_address: str) -> dict:
         """通过API获取最新邮件内容
 
         Args:
-            email: 邮箱地址
+            email_address: 邮箱地址
 
         Returns:
             dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
                   失败返回None
         """
         print(f"\n📧 正在从ChatGPT API获取最新邮件...")
-        print(f"   📮 邮箱地址: {email}")
+        print(f"   📮 邮箱地址: {email_address}")
 
         # URL编码邮箱地址
-        encoded_email = quote(email)
+        encoded_email = quote(email_address)
         api_url = f"{self.api_url}?email={encoded_email}"
 
         print(f"   🔗 API地址: {api_url}")

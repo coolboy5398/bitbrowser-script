@@ -95,25 +95,25 @@ class ChatTempMailProvider(EmailProvider):
         print("   💡 请使用get_latest_email_from_api()方法")
         return None
 
-    def get_latest_email_from_api(self, email: str) -> dict:
+    def get_latest_email_from_api(self, email_address: str) -> dict:
         """通过API获取最新邮件内容
 
         Args:
-            email: 邮箱地址
+            email_address: 邮箱地址
 
         Returns:
             dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
                   失败返回None
         """
         print(f"\n📧 正在从ChatTempMail API获取最新邮件...")
-        print(f"   📮 邮箱地址: {email}")
+        print(f"   📮 邮箱地址: {email_address}")
 
         if not self.api_key:
             print("   ✗ 错误: 未设置API密钥")
             return None
 
         # 1. 获取邮箱ID
-        email_id = self._get_email_id(email)
+        email_id = self._get_email_id(email_address)
         if not email_id:
             print("   ✗ 无法获取邮箱ID")
             return None

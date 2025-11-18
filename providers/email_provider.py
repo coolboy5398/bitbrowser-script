@@ -87,11 +87,11 @@ class EmailProvider(ABC):
         pass
 
     @abstractmethod
-    def get_latest_email_from_api(self, email: str) -> dict:
+    def get_latest_email_from_api(self, email_address: str) -> dict:
         """通过API获取最新邮件内容
 
         Args:
-            email: 邮箱地址
+            email_address: 邮箱地址
 
         Returns:
             dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}

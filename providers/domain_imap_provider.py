@@ -281,11 +281,11 @@ class DomainIMAPProvider(EmailProvider):
         print("   💡 请使用get_latest_email_from_api()方法")
         return None
     
-    def get_latest_email_from_api(self, email: str, timeout: int = 60, check_interval: int = 3) -> dict:
+    def get_latest_email_from_api(self, email_address: str, timeout: int = 60, check_interval: int = 3) -> dict:
         """通过IMAP获取发送到指定邮箱的最新邮件
         
         Args:
-            email: 邮箱地址（用于筛选收件人）
+            email_address: 邮箱地址（用于筛选收件人）
             timeout: 超时时间（秒）,默认60秒
             check_interval: 检查间隔（秒）,默认3秒
             
@@ -293,7 +293,7 @@ class DomainIMAPProvider(EmailProvider):
             dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
                   失败返回None
         """
-        print(f"   📬 等待邮件发送到: {email}")
+        print(f"   📬 等待邮件发送到: {email_address}")
         print(f"   ⏳ 超时时间: {timeout}秒, 检查间隔: {check_interval}秒")
         
         imap = None
@@ -318,7 +318,7 @@ class DomainIMAPProvider(EmailProvider):
                 
                 # 搜索发送到指定邮箱的邮件
                 # 使用TO搜索条件
-                search_criteria = f'(TO "{email}")'
+                search_criteria = f'(TO "{email_address}")'
                 
                 try:
                     # 搜索邮件
