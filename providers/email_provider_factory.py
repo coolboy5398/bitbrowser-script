@@ -12,6 +12,7 @@
 from .email_provider import EmailProvider
 from .chatgpt_mail_provider import ChatGPTMailProvider
 from .chat_tempmail_provider import ChatTempMailProvider
+from .domain_imap_provider import DomainIMAPProvider
 
 
 # 邮箱服务配置字典
@@ -25,6 +26,11 @@ PROVIDERS = {
         'name': 'ChatTempMail临时邮箱',
         'class': ChatTempMailProvider,
         'description': 'https://chat-tempmail.com/ 临时邮箱服务 (需要API密钥)'
+    },
+    'domain-imap': {
+        'name': '域名IMAP邮箱',
+        'class': DomainIMAPProvider,
+        'description': '自定义域名邮箱 + QQ邮箱IMAP接收服务'
     },
     # 未来可以添加更多邮箱服务
     # 'tempmail': {
