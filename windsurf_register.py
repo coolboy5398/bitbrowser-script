@@ -1016,7 +1016,7 @@ def main():
     print("=" * 70)
 
     # 1. 初始化邮箱服务
-    provider = EmailProviderFactory.create('chatgpt')
+    provider = EmailProviderFactory.create('domain-imap')
     print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
 
