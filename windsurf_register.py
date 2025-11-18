@@ -745,6 +745,253 @@ def fill_verification_code(ws_url, email, provider):
         cdp.close()
 
 
+def skip_onboarding_page(ws_url, max_wait_seconds=30):
+    """跳过 onboarding 页面
+    
+    Args:
+        ws_url (str): WebSocket地址
+        max_wait_seconds (int): 最大等待时间（秒）
+        
+    Returns:
+        bool: 成功返回True，失败返回False
+    """
+    print(f"\n⏭️  正在跳过 onboarding 页面...")
+    
+    cdp = CDPClient(ws_url)
+    
+    try:
+        start_time = time.time()
+        onboarding_found = False
+        
+        # 1. 等待 onboarding 页面出现
+        print("   ⏳ 等待 onboarding 页面...")
+        while time.time() - start_time < max_wait_seconds:
+            # 获取所有页面
+            result = cdp.send("Target.getTargets", {})
+            if not result or "result" not in result:
+                human_delay(1.0)
+                continue
+            
+            targets = result["result"]["targetInfos"]
+            
+            # 查找 onboarding 页面
+            for target in targets:
+                if target.get("type") == "page":
+                    url = target.get("url", "")
+                    if "windsurf.com/account/onboarding" in url:
+                        target_id = target["targetId"]
+                        print(f"   ✓ 找到 onboarding 页面: {url}")
+                        onboarding_found = True
+                        break
+            
+            if onboarding_found:
+                break
+            
+            elapsed = time.time() - start_time
+            print(f"   ⏳ 等待中... ({int(elapsed)}秒)")
+            human_delay(2.0)
+        
+        if not onboarding_found:
+            print("   ⚠️  未找到 onboarding 页面，可能已跳过")
+            return True
+        
+        # 2. 激活页面
+        print("   🎯 激活 onboarding 页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        human_delay(1.0)
+        
+        # 3. 附加到 target
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": target_id,
+            "flatten": True
+        })
+        
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到 target")
+            return False
+        
+        session_id = result["result"]["sessionId"]
+        
+        # 4. 启用必要的域
+        cdp.send("Runtime.enable", {}, session_id=session_id)
+        cdp.send("DOM.enable", {}, session_id=session_id)
+        
+        # 5. 等待页面加载完成
+        print("   ⏳ 等待页面加载...")
+        human_delay(2.0)
+        
+        # 6. 点击 "Skip this step" 按钮
+        print("   🖱️  点击 'Skip this step' 按钮...")
+        result = cdp.send("Runtime.evaluate", {
+            "expression": """
+                (() => {
+                    // 查找 "Skip this step" 按钮
+                    const buttons = document.querySelectorAll('button');
+                    for (const button of buttons) {
+                        if (button.textContent.includes('Skip this step')) {
+                            button.click();
+                            return { success: true, message: 'Clicked Skip this step button' };
+                        }
+                    }
+                    return { success: false, message: 'Skip button not found' };
+                })()
+            """,
+            "returnByValue": True
+        }, session_id=session_id)
+        
+        if result and "result" in result and "result" in result["result"]:
+            result_data = result["result"]["result"].get("value")
+            if result_data and result_data.get("success"):
+                print(f"   ✓ {result_data.get('message')}")
+                print("   ✓ 已跳过 onboarding 页面!")
+                return True
+            else:
+                error_msg = result_data.get("message") if result_data else "Unknown error"
+                print(f"   ✗ {error_msg}")
+                return False
+        else:
+            print("   ✗ 未能执行点击脚本")
+            return False
+    
+    finally:
+        cdp.close()
+
+
+def click_select_plan_button(ws_url, max_wait_seconds=30):
+    """点击 Select plan 按钮
+    
+    Args:
+        ws_url (str): WebSocket地址
+        max_wait_seconds (int): 最大等待时间（秒）
+        
+    Returns:
+        tuple: (success, stripe_url) - 成功返回(True, URL)，失败返回(False, None)
+    """
+    print(f"\n🎯 正在处理 upgrade-prompt 页面...")
+    
+    cdp = CDPClient(ws_url)
+    
+    try:
+        start_time = time.time()
+        upgrade_found = False
+        
+        # 1. 等待 upgrade-prompt 页面出现
+        print("   ⏳ 等待 upgrade-prompt 页面...")
+        while time.time() - start_time < max_wait_seconds:
+            # 获取所有页面
+            result = cdp.send("Target.getTargets", {})
+            if not result or "result" not in result:
+                human_delay(1.0)
+                continue
+            
+            targets = result["result"]["targetInfos"]
+            
+            # 查找 upgrade-prompt 页面
+            for target in targets:
+                if target.get("type") == "page":
+                    url = target.get("url", "")
+                    if "windsurf.com/account/upgrade-prompt" in url:
+                        target_id = target["targetId"]
+                        print(f"   ✓ 找到 upgrade-prompt 页面: {url}")
+                        upgrade_found = True
+                        break
+            
+            if upgrade_found:
+                break
+            
+            elapsed = time.time() - start_time
+            print(f"   ⏳ 等待中... ({int(elapsed)}秒)")
+            human_delay(2.0)
+        
+        if not upgrade_found:
+            print("   ⚠️  未找到 upgrade-prompt 页面，可能已跳过")
+            return (True, None)
+        
+        # 2. 激活页面
+        print("   🎯 激活 upgrade-prompt 页面...")
+        cdp.send("Target.activateTarget", {"targetId": target_id})
+        human_delay(1.0)
+        
+        # 3. 附加到 target
+        result = cdp.send("Target.attachToTarget", {
+            "targetId": target_id,
+            "flatten": True
+        })
+        
+        if not result or "result" not in result:
+            print("   ✗ 无法附加到 target")
+            return (False, None)
+        
+        session_id = result["result"]["sessionId"]
+        
+        # 4. 启用必要的域
+        cdp.send("Runtime.enable", {}, session_id=session_id)
+        cdp.send("DOM.enable", {}, session_id=session_id)
+        
+        # 5. 等待页面加载完成
+        print("   ⏳ 等待页面加载...")
+        human_delay(2.0)
+        
+        # 6. 点击 "Select plan" 按钮
+        print("   🖱️  点击 'Select plan' 按钮...")
+        result = cdp.send("Runtime.evaluate", {
+            "expression": """
+                (() => {
+                    // 查找 "Select plan" 按钮
+                    const buttons = document.querySelectorAll('button');
+                    for (const button of buttons) {
+                        if (button.textContent.includes('Select plan')) {
+                            button.click();
+                            return { success: true, message: 'Clicked Select plan button' };
+                        }
+                    }
+                    return { success: false, message: 'Select plan button not found' };
+                })()
+            """,
+            "returnByValue": True
+        }, session_id=session_id)
+        
+        if result and "result" in result and "result" in result["result"]:
+            result_data = result["result"]["result"].get("value")
+            if result_data and result_data.get("success"):
+                print(f"   ✓ {result_data.get('message')}")
+                
+                # 等待跳转到 Stripe 页面
+                print("   ⏳ 等待跳转到 Stripe 支付页面...")
+                human_delay(3.0)
+                
+                # 获取 Stripe URL
+                stripe_url = None
+                for _ in range(10):  # 最多尝试10次
+                    result = cdp.send("Target.getTargets", {})
+                    if result and "result" in result:
+                        targets = result["result"]["targetInfos"]
+                        for target in targets:
+                            if target.get("type") == "page":
+                                url = target.get("url", "")
+                                if "checkout.stripe.com" in url:
+                                    stripe_url = url
+                                    print(f"   ✓ 获取到 Stripe URL")
+                                    break
+                    if stripe_url:
+                        break
+                    human_delay(1.0)
+                
+                if not stripe_url:
+                    print("   ⚠️  未能获取 Stripe URL")
+                
+                print("   ✓ 已进入套餐选择页面!")
+                return (True, stripe_url)
+            else:
+                error_msg = result_data.get("message") if result_data else "Unknown error"
+                print(f"   ✗ {error_msg}")
+                return (False, None)
+        else:
+            print("   ✗ 未能执行点击脚本")
+            return (False, None)
+    
+    finally:
+        cdp.close()
 def wait_for_register_page_loaded(ws_url, max_wait_seconds=30):
     """等待注册页面关键元素加载完成
 
@@ -1060,13 +1307,14 @@ def fill_password(ws_url, password="1qaz@WSX"):
         cdp.close()
 
 
-def save_registration_info(email, first_name=None, last_name=None, filename_prefix="windsurf_register"):
+def save_registration_info(email, first_name=None, last_name=None, stripe_url=None, filename_prefix="windsurf_register"):
     """保存注册信息到文件
 
     Args:
         email (str): 邮箱地址
         first_name (str): 名字
         last_name (str): 姓氏
+        stripe_url (str): Stripe支付页面URL
         filename_prefix (str): 文件名前缀
 
     Returns:
@@ -1083,6 +1331,9 @@ def save_registration_info(email, first_name=None, last_name=None, filename_pref
             if first_name and last_name:
                 f.write(f"姓名: {first_name} {last_name}\n")
             f.write(f"邮箱地址: {email}\n")
+            if stripe_url:
+                f.write(f"\n💳 Stripe 支付链接:\n")
+                f.write(f"{stripe_url}\n")
             f.write(f"=" * 50 + "\n")
 
         print(f"   💾 注册信息已保存到: {filename}")
@@ -1212,9 +1463,30 @@ def main():
             print("\n⚠️  验证码填写失败")
             email = None
 
-    # 11. 保存注册信息
+    # 11. 跳过 onboarding 页面
     if email:
-        save_registration_info(email, first_name, last_name)
+        skip_success = skip_onboarding_page(ws_url, max_wait_seconds=30)
+        if skip_success:
+            print("\n✅ Onboarding 页面已跳过!")
+        else:
+            print("\n⚠️  跳过 onboarding 页面失败（可能不影响注册）")
+            # 不设置 email = None，因为这一步失败不影响注册成功
+
+    # 12. 点击 Select plan 按钮进入套餐选择
+    stripe_url = None
+    if email:
+        plan_success, stripe_url = click_select_plan_button(ws_url, max_wait_seconds=30)
+        if plan_success:
+            print("\n✅ 已进入套餐选择页面!")
+            if stripe_url:
+                print(f"   💳 Stripe URL: {stripe_url[:80]}...")
+        else:
+            print("\n⚠️  进入套餐选择失败（可能不影响注册）")
+            # 不设置 email = None，因为这一步失败不影响注册成功
+
+    # 13. 保存注册信息
+    if email:
+        save_registration_info(email, first_name, last_name, stripe_url)
 
         # 计算总耗时
         end_time = time.time()
