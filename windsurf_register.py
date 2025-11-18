@@ -1352,8 +1352,14 @@ def main():
     print("=" * 70)
 
     # 1. 初始化邮箱服务
-    provider = EmailProviderFactory.create('domain-imap')
-    print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
+    provider_name = 'domain-imap'
+    provider = EmailProviderFactory.create(provider_name)
+    
+    # 动态获取服务显示名称
+    from providers.email_provider_factory import PROVIDERS
+    service_display_name = PROVIDERS.get(provider_name, {}).get('name', provider_name)
+    
+    print(f"\n📧 使用邮箱服务: {service_display_name}")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
 
     # 2. 创建浏览器窗口

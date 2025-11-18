@@ -1328,9 +1328,15 @@ def main():
     print("=" * 70)
 
     # 0. 初始化邮箱服务提供者
-    provider = EmailProviderFactory.create('chatgpt')
+    provider_name = 'chatgpt'
+    provider = EmailProviderFactory.create(provider_name)
     # provider = EmailProviderFactory.create('chat-tempmail', api_key='mk_UTCVqjR7yXgqvKtWPPsSW2YNFE76NpMr')
-    print(f"\n📧 使用邮箱服务: ChatGPT临时邮箱")
+    
+    # 动态获取服务显示名称
+    from providers.email_provider_factory import PROVIDERS
+    service_display_name = PROVIDERS.get(provider_name, {}).get('name', provider_name)
+    
+    print(f"\n📧 使用邮箱服务: {service_display_name}")
     print(f"   🔗 页面地址: {provider.get_page_url()}")
     # 1. 创建窗口（使用SOCKS5代理，不设置platform和url）
     browser_id = BitBrowserAPI.create_window(
