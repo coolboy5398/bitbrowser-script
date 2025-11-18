@@ -745,6 +745,91 @@ def fill_verification_code(ws_url, email, provider):
         cdp.close()
 
 
+def wait_for_register_page_loaded(ws_url, max_wait_seconds=30):
+    """等待注册页面关键元素加载完成
+
+    Args:
+        ws_url (str): WebSocket地址
+        max_wait_seconds (int): 最大等待时间（秒）
+
+    Returns:
+        bool: 成功返回True，超时返回False
+    """
+    print(f"\n⏳ 等待注册页面关键元素加载...")
+
+    cdp = CDPClient(ws_url)
+
+    try:
+        start_time = time.time()
+        last_progress_time = 0
+
+        while time.time() - start_time < max_wait_seconds:
+            # 获取所有页面
+            result = cdp.send("Target.getTargets", {})
+            if not result or "result" not in result:
+                human_delay(1.0)
+                continue
+
+            targets = result["result"]["targetInfos"]
+
+            # 查找 Windsurf 注册页面
+            for target in targets:
+                if target.get("type") == "page":
+                    url = target.get("url", "")
+                    if "windsurf.com" in url and "register" in url:
+                        # 附加到页面检查关键元素是否存在
+                        target_id = target.get("targetId")
+                        cdp.send("Target.activateTarget", {"targetId": target_id})
+                        
+                        result = cdp.send("Target.attachToTarget", {
+                            "targetId": target_id,
+                            "flatten": True
+                        })
+                        
+                        if result and "result" in result:
+                            session_id = result["result"]["sessionId"]
+                            cdp.send("Runtime.enable", {}, session_id=session_id)
+                            
+                            # 检查注册表单的关键元素是否存在
+                            check_result = cdp.send("Runtime.evaluate", {
+                                "expression": """
+                                    (() => {
+                                        const firstNameInput = document.querySelector('input[placeholder*="first name" i]');
+                                        const lastNameInput = document.querySelector('input[placeholder*="last name" i]');
+                                        const emailInput = document.querySelector('input[placeholder*="email" i]');
+                                        
+                                        return {
+                                            allLoaded: firstNameInput !== null && lastNameInput !== null && emailInput !== null,
+                                            firstName: firstNameInput !== null,
+                                            lastName: lastNameInput !== null,
+                                            email: emailInput !== null
+                                        };
+                                    })()
+                                """,
+                                "returnByValue": True
+                            }, session_id=session_id)
+                            
+                            if check_result and "result" in check_result and "result" in check_result["result"]:
+                                result_data = check_result["result"]["result"].get("value")
+                                if result_data and result_data.get("allLoaded"):
+                                    elapsed = int(time.time() - start_time)
+                                    print(f"   ✓ 注册页面关键元素已加载（用时{elapsed}秒）")
+                                    return True
+
+            # 显示等待进度（每2秒显示一次）
+            elapsed = int(time.time() - start_time)
+            if elapsed - last_progress_time >= 2:
+                print(f"   ⏳ 等待中... ({elapsed}秒)")
+                last_progress_time = elapsed
+            human_delay(1.0)
+
+        print(f"   ✗ 等待超时（{max_wait_seconds}秒）")
+        return False
+
+    finally:
+        cdp.close()
+
+
 def wait_for_password_page(ws_url, max_wait_seconds=30):
     """等待密码页面加载
 
@@ -1066,10 +1151,15 @@ def main():
         if result and "result" in result:
             print("   ✓ 注册页面已打开")
 
-        human_delay(3.0)
-
     finally:
         cdp.close()
+
+    # 等待注册页面关键元素加载完成
+    register_page_loaded = wait_for_register_page_loaded(ws_url, max_wait_seconds=30)
+    if not register_page_loaded:
+        print("\n❌ 注册页面加载超时，程序退出")
+        BitBrowserAPI.close_window(browser_id)
+        return
 
     # 5. 获取邮箱地址
     email = get_email_from_browser(ws_url, provider)
