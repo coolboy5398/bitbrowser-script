@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Stripe卡号测试工具 V2</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				min-height: 100vh;
+				padding: 20px;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+			}
+
+			.container {
+				background: white;
+				border-radius: 16px;
+				box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+				max-width: 600px;
+				width: 100%;
+				padding: 40px;
+			}
+
+			h1 {
+				color: #333;
+				margin-bottom: 10px;
+				font-size: 28px;
+			}
+
+			.subtitle {
+				color: #666;
+				margin-bottom: 30px;
+				font-size: 14px;
+			}
+
+			.form-group {
+				margin-bottom: 20px;
+			}
+
+			label {
+				display: block;
+				margin-bottom: 8px;
+				color: #333;
+				font-weight: 500;
+				font-size: 14px;
+			}
+
+			input,
+			select {
+				width: 100%;
+				padding: 12px 16px;
+				border: 2px solid #e0e0e0;
+				border-radius: 8px;
+				font-size: 16px;
+				transition: all 0.3s;
+			}
+
+			input:focus,
+			select:focus {
+				outline: none;
+				border-color: #667eea;
+				box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+			}
+
+			.row {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 15px;
+			}
+
+			button {
+				width: 100%;
+				padding: 14px;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				border: none;
+				border-radius: 8px;
+				font-size: 16px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: transform 0.2s, box-shadow 0.2s;
+				margin-top: 10px;
+			}
+
+			button:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+			}
+
+			button:active {
+				transform: translateY(0);
+			}
+
+			button:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+				transform: none;
+			}
+
+			.result {
+				margin-top: 30px;
+				padding: 20px;
+				border-radius: 8px;
+				display: none;
+			}
+
+			.result.success {
+				background: #d4edda;
+				border: 2px solid #28a745;
+				color: #155724;
+			}
+
+			.result.error {
+				background: #f8d7da;
+				border: 2px solid #dc3545;
+				color: #721c24;
+			}
+
+			.result.info {
+				background: #d1ecf1;
+				border: 2px solid #17a2b8;
+				color: #0c5460;
+			}
+
+			.result-title {
+				font-weight: 600;
+				font-size: 18px;
+				margin-bottom: 10px;
+			}
+
+			.result-content {
+				font-size: 14px;
+				line-height: 1.6;
+			}
+
+			.loading {
+				display: inline-block;
+				width: 20px;
+				height: 20px;
+				border: 3px solid rgba(255, 255, 255, 0.3);
+				border-radius: 50%;
+				border-top-color: white;
+				animation: spin 1s ease-in-out infinite;
+			}
+
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			.config-section {
+				background: #f8f9fa;
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 30px;
+			}
+
+			.config-section h3 {
+				color: #333;
+				margin-bottom: 15px;
+				font-size: 16px;
+			}
+
+			.hint {
+				font-size: 12px;
+				color: #666;
+				margin-top: 5px;
+			}
+
+			.warning {
+				background: #fff3cd;
+				border: 2px solid #ffc107;
+				color: #856404;
+				padding: 15px;
+				border-radius: 8px;
+				margin-bottom: 20px;
+				font-size: 14px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>🧪 Stripe卡号测试工具 V2</h1>
+			<p class="subtitle">使用Stripe Tokens API测试生成的卡号</p>
+
+			<div class="warning">⚠️ <strong>注意：</strong>此方法使用Stripe Tokens API，需要在Stripe Dashboard中启用"Raw card data APIs"权限。</div>
+
+			<!-- 配置区域 -->
+			<div class="config-section">
+				<h3>⚙️ Stripe配置</h3>
+				<div class="form-group">
+					<label for="publishableKey">Stripe Publishable Key *</label>
+					<input type="text" id="publishableKey" placeholder="pk_test_..." required />
+					<p class="hint">从Stripe Dashboard获取的可发布密钥</p>
+				</div>
+			</div>
+
+			<!-- 卡号测试表单 -->
+			<form id="paymentForm">
+				<div class="form-group">
+					<label for="cardNumber">卡号 *</label>
+					<input type="text" id="cardNumber" placeholder="4242 4242 4242 4242" maxlength="19" required />
+				</div>
+
+				<div class="row">
+					<div class="form-group">
+						<label for="expiry">有效期 (MM/YY) *</label>
+						<input type="text" id="expiry" placeholder="12/34" maxlength="5" required />
+					</div>
+
+					<div class="form-group">
+						<label for="cvc">CVV *</label>
+						<input type="text" id="cvc" placeholder="123" maxlength="4" required />
+					</div>
+				</div>
+
+				<button type="submit" id="submitBtn">
+					<span id="btnText">🚀 开始测试</span>
+					<span id="btnLoading" style="display: none"><span class="loading"></span> 测试中...</span>
+				</button>
+			</form>
+
+			<!-- 结果显示 -->
+			<div id="result" class="result">
+				<div class="result-title" id="resultTitle"></div>
+				<div class="result-content" id="resultContent"></div>
+			</div>
+		</div>
+
+		<script>
+			let publishableKey = ''
+
+			// 保存密钥
+			document.getElementById('publishableKey').addEventListener('blur', function () {
+				publishableKey = this.value.trim()
+				if (publishableKey.startsWith('pk_test_')) {
+					showResult('info', '✅ 密钥已保存', '可以开始测试卡号了')
+				}
+			})
+
+			// 格式化卡号输入
+			document.getElementById('cardNumber').addEventListener('input', function (e) {
+				let value = e.target.value.replace(/\s/g, '')
+				let formattedValue = value.match(/.{1,4}/g)?.join(' ') || value
+				e.target.value = formattedValue
+			})
+
+			// 格式化有效期输入
+			document.getElementById('expiry').addEventListener('input', function (e) {
+				let value = e.target.value.replace(/\D/g, '')
+				if (value.length >= 2) {
+					value = value.slice(0, 2) + '/' + value.slice(2, 4)
+				}
+				e.target.value = value
+			})
+
+			// 只允许数字输入CVV
+			document.getElementById('cvc').addEventListener('input', function (e) {
+				e.target.value = e.target.value.replace(/\D/g, '')
+			})
+
+			// 提交表单
+			document.getElementById('paymentForm').addEventListener('submit', async function (e) {
+				e.preventDefault()
+
+				if (!publishableKey || !publishableKey.startsWith('pk_test_')) {
+					showResult('error', '❌ 错误', '请先输入有效的Stripe Publishable Key')
+					return
+				}
+
+				// 获取表单数据
+				const cardNumber = document.getElementById('cardNumber').value.replace(/\s/g, '')
+				const expiry = document.getElementById('expiry').value
+				const cvc = document.getElementById('cvc').value
+
+				// 解析有效期
+				const [expMonth, expYear] = expiry.split('/')
+
+				// 验证输入
+				if (!cardNumber || !expMonth || !expYear || !cvc) {
+					showResult('error', '❌ 输入错误', '请填写完整的卡号信息')
+					return
+				}
+
+				// 显示加载状态
+				setLoading(true)
+				hideResult()
+
+				try {
+					// 使用Stripe Tokens API创建Token
+					console.log('创建Token...')
+
+					const formData = new URLSearchParams()
+					formData.append('card[number]', cardNumber)
+					formData.append('card[exp_month]', expMonth)
+					formData.append('card[exp_year]', '20' + expYear)
+					formData.append('card[cvc]', cvc)
+
+					const response = await fetch('https://api.stripe.com/v1/tokens', {
+						method: 'POST',
+						headers: {
+							Authorization: `Bearer ${publishableKey}`,
+							'Content-Type': 'application/x-www-form-urlencoded'
+						},
+						body: formData
+					})
+
+					const result = await response.json()
+
+					if (response.ok) {
+						// Token创建成功
+						console.log('Token创建成功:', result.id)
+
+						showResult(
+							'success',
+							'🎉 测试成功！',
+							`✅ 卡号验证通过<br>
+                         ✅ Token创建成功<br>
+                         🎫 Token ID: ${result.id}<br>
+                         💳 品牌: ${result.card.brand}<br>
+                         🔢 后四位: ${result.card.last4}<br>
+                         📅 有效期: ${result.card.exp_month}/${result.card.exp_year}<br>
+                         🏦 银行: ${result.card.bank_name || 'N/A'}<br>
+                         🌍 国家: ${result.card.country || 'N/A'}<br><br>
+                         <strong>说明：</strong>卡号格式正确，可以创建Token。<br>
+                         这证明生成的卡号是有效的！`
+						)
+					} else {
+						// Token创建失败
+						const error = result.error
+						console.error('Token创建失败:', error)
+
+						let errorMsg = error.message || '未知错误'
+						let errorType = error.type || 'unknown'
+						let errorCode = error.code || 'unknown'
+
+						showResult(
+							'error',
+							'❌ 测试失败',
+							`错误类型: ${errorType}<br>
+                         错误码: ${errorCode}<br>
+                         错误信息: ${errorMsg}<br><br>
+                         可能的原因：<br>
+                         • 卡号格式不正确或Luhn校验失败<br>
+                         • 有效期或CVV错误<br>
+                         • Stripe API密钥无效<br>
+                         • 未启用Raw Card Data API权限<br>
+                         • 网络连接问题`
+						)
+					}
+				} catch (error) {
+					console.error('测试失败:', error)
+					showResult(
+						'error',
+						'❌ 测试失败',
+						`错误信息: ${error.message}<br><br>
+                     可能的原因：<br>
+                     • 网络连接问题<br>
+                     • Stripe API不可访问<br>
+                     • 浏览器CORS限制`
+					)
+				} finally {
+					setLoading(false)
+				}
+			})
+
+			// 显示结果
+			function showResult(type, title, content) {
+				const resultDiv = document.getElementById('result')
+				resultDiv.className = `result ${type}`
+				resultDiv.style.display = 'block'
+				document.getElementById('resultTitle').textContent = title
+				document.getElementById('resultContent').innerHTML = content
+			}
+
+			// 隐藏结果
+			function hideResult() {
+				document.getElementById('result').style.display = 'none'
+			}
+
+			// 设置加载状态
+			function setLoading(loading) {
+				const submitBtn = document.getElementById('submitBtn')
+				const btnText = document.getElementById('btnText')
+				const btnLoading = document.getElementById('btnLoading')
+
+				submitBtn.disabled = loading
+				btnText.style.display = loading ? 'none' : 'inline'
+				btnLoading.style.display = loading ? 'inline' : 'none'
+			}
+		</script>
+	</body>
+</html>

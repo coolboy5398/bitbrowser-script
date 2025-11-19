@@ -1,0 +1,66 @@
+{
+  "total": 4,
+  "success": 0,
+  "failed": 4,
+  "details": [
+    {
+      "card": {
+        "cardNumber": "4862 3654 4334 8897",
+        "expiryDate": "07/28",
+        "cvc": "544",
+        "cardBrand": "Visa"
+      },
+      "success": false,
+      "message": "⏳ 步骤1/3: 创建Token...",
+      "details": {
+        "failure_reason": "未知错误，请查看详细信息",
+        "full_result": ""
+      }
+    },
+    {
+      "card": {
+        "cardNumber": "5157 3543 4124 8566",
+        "expiryDate": "06/30",
+        "cvc": "147",
+        "cardBrand": "MasterCard"
+      },
+      "success": false,
+      "message": "⏳ 步骤1/3: 创建Token...",
+      "details": {
+        "failure_reason": "未知错误，请查看详细信息",
+        "full_result": ""
+      }
+    },
+    {
+      "card": {
+        "cardNumber": "5178 0572 6272 3385",
+        "expiryDate": "03/30",
+        "cvc": "699",
+        "cardBrand": "MasterCard"
+      },
+      "success": false,
+      "message": "⏳ 步骤1/3: 创建Token...",
+      "details": {
+        "failure_reason": "未知错误，请查看详细信息",
+        "full_result": ""
+      }
+    },
+    {
+      "card": {
+        "cardNumber": "4147 2042 3450 5059",
+        "expiryDate": "04/30",
+        "cvc": "573",
+        "cardBrand": "Visa"
+      },
+      "success": false,
+      "message": "⏳ 步骤1/3: 创建Token...",
+      "details": {
+        "failure_reason": "未知错误，请查看详细信息",
+        "full_result": ""
+      }
+    }
+  ],
+  "failure_analysis": {
+    "未知错误，请查看详细信息": 4
+  }
+}

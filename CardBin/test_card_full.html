@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>完整支付测试</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				min-height: 100vh;
+				padding: 20px;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+			}
+			.container {
+				background: white;
+				border-radius: 16px;
+				box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+				max-width: 600px;
+				width: 100%;
+				padding: 40px;
+			}
+			h1 {
+				color: #333;
+				margin-bottom: 10px;
+				font-size: 28px;
+			}
+			.subtitle {
+				color: #666;
+				margin-bottom: 30px;
+				font-size: 14px;
+			}
+			.form-group {
+				margin-bottom: 20px;
+			}
+			label {
+				display: block;
+				margin-bottom: 8px;
+				color: #333;
+				font-weight: 500;
+				font-size: 14px;
+			}
+			input {
+				width: 100%;
+				padding: 12px 16px;
+				border: 2px solid #e0e0e0;
+				border-radius: 8px;
+				font-size: 16px;
+			}
+			input:focus {
+				outline: none;
+				border-color: #667eea;
+				box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+			}
+			.row {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 15px;
+			}
+			button {
+				width: 100%;
+				padding: 14px;
+				background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+				color: white;
+				border: none;
+				border-radius: 8px;
+				font-size: 16px;
+				font-weight: 600;
+				cursor: pointer;
+				margin-top: 10px;
+			}
+			button:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+			}
+			button:disabled {
+				opacity: 0.6;
+				cursor: not-allowed;
+			}
+			.result {
+				margin-top: 30px;
+				padding: 20px;
+				border-radius: 8px;
+				display: none;
+			}
+			.result.success {
+				background: #d4edda;
+				border: 2px solid #28a745;
+				color: #155724;
+			}
+			.result.error {
+				background: #f8d7da;
+				border: 2px solid #dc3545;
+				color: #721c24;
+			}
+			.result.info {
+				background: #d1ecf1;
+				border: 2px solid #17a2b8;
+				color: #0c5460;
+			}
+			.result-title {
+				font-weight: 600;
+				font-size: 18px;
+				margin-bottom: 10px;
+			}
+			.loading {
+				display: inline-block;
+				width: 20px;
+				height: 20px;
+				border: 3px solid rgba(255, 255, 255, 0.3);
+				border-radius: 50%;
+				border-top-color: white;
+				animation: spin 1s ease-in-out infinite;
+			}
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+			.config-section {
+				background: #f8f9fa;
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 30px;
+			}
+			.hint {
+				font-size: 12px;
+				color: #666;
+				margin-top: 5px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>🧪 完整支付测试</h1>
+			<p class="subtitle">测试生成的卡号能否完成支付</p>
+
+			<div class="config-section">
+				<h3>⚙️ 配置</h3>
+				<div class="form-group">
+					<label>后端API地址</label>
+					<input type="text" id="apiUrl" value="http://localhost:5000" placeholder="http://localhost:5000" />
+					<p class="hint">确保payment_test_server.py正在运行</p>
+				</div>
+			</div>
+
+			<form id="paymentForm">
+				<div class="form-group">
+					<label>卡号 *</label>
+					<input type="text" id="cardNumber" placeholder="4242 4242 4242 4242" maxlength="19" required />
+				</div>
+				<div class="row">
+					<div class="form-group">
+						<label>有效期 (MM/YY) *</label>
+						<input type="text" id="expiry" placeholder="12/34" maxlength="5" required />
+					</div>
+					<div class="form-group">
+						<label>CVV *</label>
+						<input type="text" id="cvc" placeholder="123" maxlength="4" required />
+					</div>
+				</div>
+				<button type="submit" id="submitBtn">
+					<span id="btnText">🚀 测试支付</span>
+					<span id="btnLoading" style="display: none"><span class="loading"></span> 测试中...</span>
+				</button>
+			</form>
+
+			<div id="result" class="result">
+				<div class="result-title" id="resultTitle"></div>
+				<div id="resultContent"></div>
+			</div>
+		</div>
+
+		<script>
+			document.getElementById('paymentForm').addEventListener('submit', async function (e) {
+				e.preventDefault()
+
+				const apiUrl = document.getElementById('apiUrl').value.trim()
+				const cardNumber = document.getElementById('cardNumber').value.replace(/\s/g, '')
+				const expiry = document.getElementById('expiry').value
+				const cvc = document.getElementById('cvc').value
+
+				setLoading(true)
+				hideResult()
+
+				try {
+					// 步骤1: 创建Token
+					showResult('info', '⏳ 步骤1/3: 创建Token...', '')
+
+					const tokenResponse = await fetch('https://api.stripe.com/v1/tokens', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: new URLSearchParams({
+							'card[number]': cardNumber,
+							'card[exp_month]': expiry.split('/')[0],
+							'card[exp_year]': '20' + expiry.split('/')[1],
+							'card[cvc]': cvc
+						})
+					})
+
+					if (!tokenResponse.ok) {
+						throw new Error('Token创建失败')
+					}
+
+					const tokenData = await tokenResponse.json()
+					const tokenId = tokenData.id
+
+					// 步骤2: 测试支付
+					showResult('info', '⏳ 步骤2/3: 创建PaymentIntent...', `Token: ${tokenId}`)
+
+					const paymentResponse = await fetch(`${apiUrl}/api/test-payment`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							token: tokenId,
+							amount: 100,
+							currency: 'usd'
+						})
+					})
+
+					const paymentData = await paymentResponse.json()
+
+					if (paymentData.success) {
+						showResult(
+							'success',
+							'🎉 支付测试成功！',
+							`✅ Token创建成功<br>
+                         ✅ PaymentIntent创建成功<br>
+                         ✅ 支付确认成功<br><br>
+                         🎫 Token: ${tokenId}<br>
+                         💰 PaymentIntent: ${paymentData.payment_intent_id}<br>
+                         💳 品牌: ${paymentData.card.brand}<br>
+                         🔢 后四位: ${paymentData.card.last4}<br>
+                         💵 金额: $${paymentData.amount / 100}<br>
+                         📊 状态: ${paymentData.status}<br><br>
+                         <strong>结论：</strong>此卡号可以成功完成支付！`
+						)
+					} else {
+						showResult(
+							'error',
+							'❌ 支付失败',
+							`Token: ${tokenId}<br>
+                         错误: ${paymentData.message}<br>
+                         状态: ${paymentData.status || 'N/A'}<br>
+                         错误码: ${paymentData.error_code || 'N/A'}`
+						)
+					}
+				} catch (error) {
+					showResult('error', '❌ 测试失败', `错误: ${error.message}`)
+				} finally {
+					setLoading(false)
+				}
+			})
+
+			function showResult(type, title, content) {
+				const resultDiv = document.getElementById('result')
+				resultDiv.className = `result ${type}`
+				resultDiv.style.display = 'block'
+				document.getElementById('resultTitle').textContent = title
+				document.getElementById('resultContent').innerHTML = content
+			}
+
+			function hideResult() {
+				document.getElementById('result').style.display = 'none'
+			}
+
+			function setLoading(loading) {
+				document.getElementById('submitBtn').disabled = loading
+				document.getElementById('btnText').style.display = loading ? 'none' : 'inline'
+				document.getElementById('btnLoading').style.display = loading ? 'inline' : 'none'
+			}
+		</script>
+	</body>
+</html>
