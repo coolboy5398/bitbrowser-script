@@ -1352,7 +1352,8 @@ def main():
     print("=" * 70)
 
     # 1. 初始化邮箱服务
-    provider_name = 'domain-imap'
+    # provider_name = 'domain-imap'
+    provider_name = 'chatgpt'
     provider = EmailProviderFactory.create(provider_name)
     
     # 动态获取服务显示名称
