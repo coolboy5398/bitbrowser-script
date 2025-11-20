@@ -29,13 +29,29 @@ def load_config(config_path: str = 'config.json') -> Dict[str, Any]:
         return {}
 
 
+def load_bins(bins_file: str = 'bins.json') -> List[str]:
+    """加载BIN配置文件"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    full_path = os.path.join(script_dir, bins_file)
+    
+    try:
+        with open(full_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get('bins', [])
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f'⚠️ BIN配置文件错误: {e}')
+        return []
+
+
 # 加载配置
 CONFIG = load_config()
 STRIPE_TEST_SECRET_KEY = CONFIG.get('stripe_api_key', 'sk_test_YOUR_KEY_HERE')
 STRIPE_API_BASE = 'https://api.stripe.com/v1'
 DEFAULT_AMOUNT = CONFIG.get('test_settings', {}).get('amount', 100)
 DEFAULT_CURRENCY = CONFIG.get('test_settings', {}).get('currency', 'usd')
-DEFAULT_BINS = CONFIG.get('bins_to_test', [])
+
+# 加载BIN列表
+DEFAULT_BINS = load_bins('bins.json')
 
 
 # ============================================

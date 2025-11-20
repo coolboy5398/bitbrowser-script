@@ -29,9 +29,22 @@ def load_config(config_path: str = 'config.json') -> Dict[str, Any]:
         return {}
 
 
+def load_bins(bins_file: str = 'bins.json') -> List[str]:
+    """加载BIN配置文件"""
+    try:
+        with open(bins_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return data.get('bins', [])
+    except Exception as e:
+        print(f'⚠️ BIN配置文件错误: {e}')
+        return []
+
+
 CONFIG = load_config()
 STRIPE_PUBLISHABLE_KEY = CONFIG.get('stripe_publishable_key', '')
-DEFAULT_BINS = CONFIG.get('bins_to_test', [])
+
+# 加载BIN列表
+DEFAULT_BINS = load_bins('bins.json')
 
 
 # ============================================
