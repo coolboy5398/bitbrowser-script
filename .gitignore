@@ -3,3 +3,4 @@ session_*.txt
 windsurf_register_*.txt
 payment_link_*.txt
 __pycache__/
+/CardBin/config.json
