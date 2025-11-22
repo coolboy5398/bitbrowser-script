@@ -1404,7 +1404,7 @@ def main():
         # 打开 Windsurf 注册页面
         print("   🌊 打开 Windsurf 注册页面...")
         result = cdp.send("Target.createTarget", {
-            "url": "https://windsurf.com/account/register"
+            "url": "https://windsurf.com/account/register?referral_code=f0jgufmy4q5dh2dg"
         })
         if result and "result" in result:
             print("   ✓ 注册页面已打开")
@@ -1454,7 +1454,7 @@ def main():
 
     # 9. 填写密码
     if email:
-        password_success = fill_password(ws_url, password="1qaz@WSX")
+        password_success = fill_password(ws_url, password=email)
         if password_success:
             print("\n✅ 密码已填写!")
         else:
