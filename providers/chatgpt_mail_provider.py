@@ -589,13 +589,16 @@ class ChatGPTMailProvider(EmailProvider):
             response = urlopen(req, timeout=10)
             data = json.loads(response.read().decode('utf-8'))
 
-            email = data.get('email')
-            if email:
-                print(f"   ✓ 生成邮箱成功: {email}")
-                return email
-            else:
-                print("   ✗ API响应中没有email字段")
-                return None
+            # 新API响应格式: {"success": true, "data": {"email": "..."}, "error": ""}
+            if data.get('success'):
+                email = data.get('data', {}).get('email')
+                if email:
+                    print(f"   ✓ 生成邮箱成功: {email}")
+                    return email
+            
+            error_msg = data.get('error', 'API响应中没有email字段')
+            print(f"   ✗ {error_msg}")
+            return None
 
         except HTTPError as e:
             error_body = e.read().decode('utf-8') if e.fp else 'No error body'
@@ -786,14 +789,22 @@ class ChatGPTMailProvider(EmailProvider):
                 response = urlopen(req, timeout=10)
                 data = json.loads(response.read().decode('utf-8'))
 
-                # 检查是否有邮件
-                if not data.get('emails'):
+                # 新API响应格式: {"success": true, "data": {"emails": [...], "count": n}, "error": ""}
+                if not data.get('success'):
+                    error_msg = data.get('error', '请求失败')
+                    print(f"   ⚠️ API错误: {error_msg}")
+                    from bitbrowser_api import human_delay
+                    human_delay(3.0)
+                    continue
+                
+                emails_data = data.get('data', {})
+                emails = emails_data.get('emails', [])
+                
+                if not emails:
                     print(f"   ⏳ 暂无邮件,等待3秒后重试...")
                     from bitbrowser_api import human_delay
                     human_delay(3.0)
                     continue
-
-                emails = data['emails']
                 print(f"   ✓ 找到 {len(emails)} 封邮件")
 
                 # 获取最新邮件（第一封）
@@ -804,10 +815,13 @@ class ChatGPTMailProvider(EmailProvider):
 
                 print(f"   📧 最新邮件: {from_addr} - {subject}")
 
+                # 新API提供html_content字段
+                html_content = latest_email.get('html_content', '')
+                
                 return {
                     'subject': subject,
                     'content': content,
-                    'html': '',  # API不提供HTML内容
+                    'html': html_content,
                     'from': from_addr
                 }
 
