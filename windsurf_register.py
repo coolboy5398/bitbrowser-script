@@ -858,57 +858,51 @@ def skip_onboarding_page(ws_url, max_wait_seconds=30):
 
 
 def click_select_plan_button(ws_url, max_wait_seconds=30):
-    """点击 Select plan 按钮
+    """点击套餐选择按钮 (Start Free Trial - Pro套餐)
+    
+    新版注册页面直接在 /account/register 页面选择套餐：
+    - Free: Download 按钮 -> /download
+    - Pro: Start Free Trial 按钮 -> /billing/individual?plan=2
     
     Args:
         ws_url (str): WebSocket地址
         max_wait_seconds (int): 最大等待时间（秒）
         
     Returns:
-        tuple: (success, stripe_url) - 成功返回(True, URL)，失败返回(False, None)
+        tuple: (success, billing_url) - 成功返回(True, URL)，失败返回(False, None)
     """
-    print(f"\n🎯 正在处理 upgrade-prompt 页面...")
+    print(f"\n🎯 正在选择 Pro 套餐...")
     
     cdp = CDPClient(ws_url)
     
     try:
-        start_time = time.time()
-        upgrade_found = False
+        # 1. 获取 Windsurf 页面
+        print("   🔍 查找 Windsurf 页面...")
+        result = cdp.send("Target.getTargets", {})
+        if not result or "result" not in result:
+            print("   ✗ 无法获取 targets")
+            return (False, None)
         
-        # 1. 等待 upgrade-prompt 页面出现
-        print("   ⏳ 等待 upgrade-prompt 页面...")
-        while time.time() - start_time < max_wait_seconds:
-            # 获取所有页面
-            result = cdp.send("Target.getTargets", {})
-            if not result or "result" not in result:
-                human_delay(1.0)
-                continue
-            
-            targets = result["result"]["targetInfos"]
-            
-            # 查找 upgrade-prompt 页面
-            for target in targets:
-                if target.get("type") == "page":
-                    url = target.get("url", "")
-                    if "windsurf.com/account/upgrade-prompt" in url:
-                        target_id = target["targetId"]
-                        print(f"   ✓ 找到 upgrade-prompt 页面: {url}")
-                        upgrade_found = True
-                        break
-            
-            if upgrade_found:
-                break
-            
-            elapsed = time.time() - start_time
-            print(f"   ⏳ 等待中... ({int(elapsed)}秒)")
-            human_delay(2.0)
+        targets = result["result"]["targetInfos"]
         
-        if not upgrade_found:
-            print("   ⚠️  未找到 upgrade-prompt 页面，可能已跳过")
+        # 查找 Windsurf 页面
+        windsurf_target = None
+        for target in targets:
+            if target.get("type") == "page":
+                url = target.get("url", "")
+                if "windsurf.com" in url:
+                    windsurf_target = target
+                    print(f"   ✓ 找到 Windsurf 页面: {url}")
+                    break
+        
+        if not windsurf_target:
+            print("   ⚠️  未找到 Windsurf 页面")
             return (True, None)
         
+        target_id = windsurf_target["targetId"]
+        
         # 2. 激活页面
-        print("   🎯 激活 upgrade-prompt 页面...")
+        print("   🎯 激活 Windsurf 页面...")
         cdp.send("Target.activateTarget", {"targetId": target_id})
         human_delay(1.0)
         
@@ -932,20 +926,33 @@ def click_select_plan_button(ws_url, max_wait_seconds=30):
         print("   ⏳ 等待页面加载...")
         human_delay(2.0)
         
-        # 6. 点击 "Select plan" 按钮
-        print("   🖱️  点击 'Select plan' 按钮...")
+        # 6. 点击 "Start Free Trial" 按钮 (Pro 套餐)
+        print("   🖱️  点击 'Start Free Trial' 按钮 (Pro 套餐)...")
         result = cdp.send("Runtime.evaluate", {
             "expression": """
                 (() => {
-                    // 查找 "Select plan" 按钮
+                    // 方法1: 查找包含 "Start Free Trial" 文本的按钮
                     const buttons = document.querySelectorAll('button');
                     for (const button of buttons) {
-                        if (button.textContent.includes('Select plan')) {
+                        if (button.textContent.includes('Start Free Trial')) {
                             button.click();
-                            return { success: true, message: 'Clicked Select plan button' };
+                            return { success: true, message: 'Clicked Start Free Trial button' };
                         }
                     }
-                    return { success: false, message: 'Select plan button not found' };
+                    
+                    // 方法2: 查找链接到 /billing/individual?plan=2 的 a 标签
+                    const links = document.querySelectorAll('a[href*="/billing/individual"]');
+                    for (const link of links) {
+                        const btn = link.querySelector('button');
+                        if (btn) {
+                            btn.click();
+                            return { success: true, message: 'Clicked Pro plan link button' };
+                        }
+                        link.click();
+                        return { success: true, message: 'Clicked Pro plan link' };
+                    }
+                    
+                    return { success: false, message: 'Start Free Trial button not found' };
                 })()
             """,
             "returnByValue": True
@@ -956,12 +963,12 @@ def click_select_plan_button(ws_url, max_wait_seconds=30):
             if result_data and result_data.get("success"):
                 print(f"   ✓ {result_data.get('message')}")
                 
-                # 等待跳转到 Stripe 页面
-                print("   ⏳ 等待跳转到 Stripe 支付页面...")
+                # 等待跳转到 billing 页面
+                print("   ⏳ 等待跳转到支付页面...")
                 human_delay(3.0)
                 
-                # 获取 Stripe URL
-                stripe_url = None
+                # 获取 billing URL 或 Stripe URL
+                billing_url = None
                 for _ in range(10):  # 最多尝试10次
                     result = cdp.send("Target.getTargets", {})
                     if result and "result" in result:
@@ -969,19 +976,19 @@ def click_select_plan_button(ws_url, max_wait_seconds=30):
                         for target in targets:
                             if target.get("type") == "page":
                                 url = target.get("url", "")
-                                if "checkout.stripe.com" in url:
-                                    stripe_url = url
-                                    print(f"   ✓ 获取到 Stripe URL")
+                                if "billing/individual" in url or "checkout.stripe.com" in url:
+                                    billing_url = url
+                                    print(f"   ✓ 获取到支付页面 URL")
                                     break
-                    if stripe_url:
+                    if billing_url:
                         break
                     human_delay(1.0)
                 
-                if not stripe_url:
-                    print("   ⚠️  未能获取 Stripe URL")
+                if not billing_url:
+                    print("   ⚠️  未能获取支付页面 URL")
                 
-                print("   ✓ 已进入套餐选择页面!")
-                return (True, stripe_url)
+                print("   ✓ 已选择 Pro 套餐!")
+                return (True, billing_url)
             else:
                 error_msg = result_data.get("message") if result_data else "Unknown error"
                 print(f"   ✗ {error_msg}")
@@ -1307,14 +1314,14 @@ def fill_password(ws_url, password="1qaz@WSX"):
         cdp.close()
 
 
-def save_registration_info(email, first_name=None, last_name=None, stripe_url=None, filename_prefix="windsurf_register"):
+def save_registration_info(email, first_name=None, last_name=None, billing_url=None, filename_prefix="windsurf_register"):
     """保存注册信息到文件
 
     Args:
         email (str): 邮箱地址
         first_name (str): 名字
         last_name (str): 姓氏
-        stripe_url (str): Stripe支付页面URL
+        billing_url (str): 支付页面URL（Stripe或billing页面）
         filename_prefix (str): 文件名前缀
 
     Returns:
@@ -1331,9 +1338,10 @@ def save_registration_info(email, first_name=None, last_name=None, stripe_url=No
             if first_name and last_name:
                 f.write(f"姓名: {first_name} {last_name}\n")
             f.write(f"邮箱地址: {email}\n")
-            if stripe_url:
-                f.write(f"\n💳 Stripe 支付链接:\n")
-                f.write(f"{stripe_url}\n")
+            f.write(f"套餐: Pro (Free Trial)\n")
+            if billing_url:
+                f.write(f"\n💳 支付页面链接:\n")
+                f.write(f"{billing_url}\n")
             f.write(f"=" * 50 + "\n")
 
         print(f"   💾 注册信息已保存到: {filename}")
@@ -1479,21 +1487,21 @@ def main():
             print("\n⚠️  跳过 onboarding 页面失败（可能不影响注册）")
             # 不设置 email = None，因为这一步失败不影响注册成功
 
-    # 12. 点击 Select plan 按钮进入套餐选择
-    stripe_url = None
+    # 12. 选择 Pro 套餐 (Start Free Trial)
+    billing_url = None
     if email:
-        plan_success, stripe_url = click_select_plan_button(ws_url, max_wait_seconds=30)
+        plan_success, billing_url = click_select_plan_button(ws_url, max_wait_seconds=30)
         if plan_success:
-            print("\n✅ 已进入套餐选择页面!")
-            if stripe_url:
-                print(f"   💳 Stripe URL: {stripe_url[:80]}...")
+            print("\n✅ 已选择 Pro 套餐!")
+            if billing_url:
+                print(f"   💳 支付页面 URL: {billing_url[:80]}...")
         else:
-            print("\n⚠️  进入套餐选择失败（可能不影响注册）")
+            print("\n⚠️  选择套餐失败（可能不影响注册）")
             # 不设置 email = None，因为这一步失败不影响注册成功
 
     # 13. 保存注册信息
     if email:
-        save_registration_info(email, first_name, last_name, stripe_url)
+        save_registration_info(email, first_name, last_name, billing_url)
 
         # 计算总耗时
         end_time = time.time()
