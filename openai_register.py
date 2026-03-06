@@ -1,24 +1,15 @@
 import json
-import os
 import re
-import sys
 import time
-import uuid
-import math
 import random
-import string
 import secrets
 import hashlib
 import base64
-import threading
 import argparse
-from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse, parse_qs, urlencode, quote
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import urllib.parse
-import urllib.request
-import urllib.error
 
 from curl_cffi import requests
 
@@ -296,30 +287,25 @@ def _to_int(v: Any) -> int:
         return 0
 
 
-def _post_form(url: str, data: Dict[str, str], timeout: int = 30) -> Dict[str, Any]:
-    body = urllib.parse.urlencode(data).encode("utf-8")
-    req = urllib.request.Request(
+def _post_form(
+    url: str, data: Dict[str, str], proxies: Any = None, timeout: int = 30
+) -> Dict[str, Any]:
+    resp = requests.post(
         url,
-        data=body,
-        method="POST",
+        data=data,
         headers={
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept": "application/json",
         },
+        proxies=proxies,
+        impersonate="chrome",
+        timeout=timeout,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
-            if resp.status != 200:
-                raise RuntimeError(
-                    f"token exchange failed: {resp.status}: {raw.decode('utf-8', 'replace')}"
-                )
-            return json.loads(raw.decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raw = exc.read()
+    if resp.status_code != 200:
         raise RuntimeError(
-            f"token exchange failed: {exc.code}: {raw.decode('utf-8', 'replace')}"
-        ) from exc
+            f"token exchange failed: {resp.status_code}: {resp.text}"
+        )
+    return resp.json()
 
 
 @dataclass(frozen=True)
@@ -364,6 +350,7 @@ def submit_callback_url(
     expected_state: str,
     code_verifier: str,
     redirect_uri: str = DEFAULT_REDIRECT_URI,
+    proxies: Any = None,
 ) -> str:
     cb = _parse_callback_url(callback_url)
     if cb["error"]:
@@ -386,6 +373,7 @@ def submit_callback_url(
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
         },
+        proxies=proxies,
     )
 
     access_token = (token_resp.get("access_token") or "").strip()
@@ -455,8 +443,8 @@ def run(proxy: Optional[str]) -> Optional[str]:
         did = s.cookies.get("oai-did")
         print(f"[*] Device ID: {did}")
 
-        signup_body = f'{{"username":{{"value":"{email}","kind":"email"}},"screen_hint":"signup"}}'
-        sen_req_body = f'{{"p":"","id":"{did}","flow":"authorize_continue"}}'
+        signup_body = json.dumps({"username": {"value": email, "kind": "email"}, "screen_hint": "signup"})
+        sen_req_body = json.dumps({"p": "", "id": did, "flow": "authorize_continue"})
 
         sen_resp = requests.post(
             "https://sentinel.openai.com/backend-api/sentinel/req",
@@ -476,7 +464,7 @@ def run(proxy: Optional[str]) -> Optional[str]:
             return None
 
         sen_token = sen_resp.json()["token"]
-        sentinel = f'{{"p": "", "t": "", "c": "{sen_token}", "id": "{did}", "flow": "authorize_continue"}}'
+        sentinel = json.dumps({"p": "", "t": "", "c": sen_token, "id": did, "flow": "authorize_continue"})
 
         signup_resp = s.post(
             "https://auth.openai.com/api/accounts/authorize/continue",
@@ -489,6 +477,9 @@ def run(proxy: Optional[str]) -> Optional[str]:
             data=signup_body,
         )
         print(f"[*] 提交注册表单状态: {signup_resp.status_code}")
+        if signup_resp.status_code not in (200, 201):
+            print(f"[Error] 注册表单提交失败: {signup_resp.text}")
+            return None
 
         otp_resp = s.post(
             "https://auth.openai.com/api/accounts/passwordless/send-otp",
@@ -499,12 +490,15 @@ def run(proxy: Optional[str]) -> Optional[str]:
             },
         )
         print(f"[*] 验证码发送状态: {otp_resp.status_code}")
+        if otp_resp.status_code != 200:
+            print(f"[Error] 验证码发送失败: {otp_resp.text}")
+            return None
 
         code = get_oai_code(dev_token, email, proxies)
         if not code:
             return None
 
-        code_body = f'{{"code":"{code}"}}'
+        code_body = json.dumps({"code": code})
         code_resp = s.post(
             "https://auth.openai.com/api/accounts/email-otp/validate",
             headers={
@@ -515,8 +509,18 @@ def run(proxy: Optional[str]) -> Optional[str]:
             data=code_body,
         )
         print(f"[*] 验证码校验状态: {code_resp.status_code}")
+        if code_resp.status_code != 200:
+            print(f"[Error] 验证码校验失败: {code_resp.text}")
+            return None
 
-        create_account_body = '{"name":"Neo","birthdate":"2000-02-20"}'
+        random_name = random.choice(["Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Quinn", "Avery", "Blake"])
+        random_year = random.randint(1985, 2003)
+        random_month = random.randint(1, 12)
+        random_day = random.randint(1, 28)
+        create_account_body = json.dumps({
+            "name": random_name,
+            "birthdate": f"{random_year}-{random_month:02d}-{random_day:02d}",
+        })
         create_account_resp = s.post(
             "https://auth.openai.com/api/accounts/create_account",
             headers={
@@ -548,7 +552,7 @@ def run(proxy: Optional[str]) -> Optional[str]:
             print("[Error] 无法解析 workspace_id")
             return None
 
-        select_body = f'{{"workspace_id":"{workspace_id}"}}'
+        select_body = json.dumps({"workspace_id": workspace_id})
         select_resp = s.post(
             "https://auth.openai.com/api/accounts/workspace/select",
             headers={
@@ -585,6 +589,7 @@ def run(proxy: Optional[str]) -> Optional[str]:
                     code_verifier=oauth.code_verifier,
                     redirect_uri=oauth.redirect_uri,
                     expected_state=oauth.state,
+                    proxies=proxies,
                 )
             current_url = next_url
 
@@ -630,7 +635,9 @@ def main() -> None:
                 except Exception:
                     fname_email = "unknown"
 
-                file_name = f"token_{fname_email}_{int(time.time())}.json"
+                import os
+                os.makedirs("tokens", exist_ok=True)
+                file_name = os.path.join("tokens", f"token_{fname_email}_{int(time.time())}.json")
 
                 with open(file_name, "w", encoding="utf-8") as f:
                     f.write(token_json)
