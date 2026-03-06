@@ -1360,8 +1360,8 @@ def main():
     print("=" * 70)
 
     # 1. 初始化邮箱服务
-    # provider_name = 'domain-imap'
-    provider_name = 'chatgpt'
+    provider_name = 'domain-imap'
+    # provider_name = 'chatgpt'
     provider = EmailProviderFactory.create(provider_name)
     
     # 动态获取服务显示名称
@@ -1412,7 +1412,7 @@ def main():
         # 打开 Windsurf 注册页面
         print("   🌊 打开 Windsurf 注册页面...")
         result = cdp.send("Target.createTarget", {
-            "url": "https://windsurf.com/account/register?referral_code=f0jgufmy4q5dh2dg"
+            "url": "https://windsurf.com/account/register"
         })
         if result and "result" in result:
             print("   ✓ 注册页面已打开")
