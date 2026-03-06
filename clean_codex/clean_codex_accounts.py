@@ -140,14 +140,15 @@ def fetch_auth_files(base_url, token, timeout):
     return data.get("files", [])
 
 
-def delete_auth_file(base_url, token, auth_index, timeout):
+def delete_auth_file(base_url, token, name, timeout):
     resp = requests.delete(
-        f"{base_url}/v0/management/auth-files/{auth_index}",
+        f"{base_url}/v0/management/auth-files",
+        params={"name": name},
         headers=mgmt_headers(token),
         timeout=timeout,
     )
     if resp.status_code >= 400:
-        raise RuntimeError(f"DELETE {auth_index} 失败: HTTP {resp.status_code} {resp.text[:200]}")
+        raise RuntimeError(f"DELETE {name} 失败: HTTP {resp.status_code} {resp.text[:200]}")
     return True
 
 
@@ -319,16 +320,16 @@ def action_check_401_and_delete(base_url, token, timeout, results, output_401):
 
     ok, fail = 0, 0
     for r in invalid_401:
-        idx = r.get("auth_index")
-        if not idx:
+        name = r.get("name")
+        if not name:
             fail += 1
             continue
         try:
-            delete_auth_file(base_url, token, idx, timeout)
+            delete_auth_file(base_url, token, name, timeout)
             ok += 1
         except Exception as e:
             fail += 1
-            print(f"[FAIL] {idx}: {e}")
+            print(f"[FAIL] {name}: {e}")
 
     print(f"删除完成: 成功 {ok}，失败 {fail}")
 
@@ -419,16 +420,16 @@ def action_delete_by_threshold(base_url, token, timeout, results):
 
     ok, fail = 0, 0
     for r in candidates:
-        idx = r.get("auth_index")
-        if not idx:
+        name = r.get("name")
+        if not name:
             fail += 1
             continue
         try:
-            delete_auth_file(base_url, token, idx, timeout)
+            delete_auth_file(base_url, token, name, timeout)
             ok += 1
         except Exception as e:
             fail += 1
-            print(f"[FAIL] {idx}: {e}")
+            print(f"[FAIL] {name}: {e}")
 
     print(f"删除完成: 成功 {ok}，失败 {fail}")
 
