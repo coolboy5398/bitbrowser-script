@@ -599,7 +599,7 @@ def run(proxy: Optional[str]) -> Optional[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="OpenAI 自动注册脚本")
     parser.add_argument(
-        "--proxy", default=None, help="代理地址，如 http://127.0.0.1:7890"
+        "--proxy", default="http://127.0.0.1:7890", help="代理地址（默认 http://127.0.0.1:7890）"
     )
     parser.add_argument("--once", action="store_true", help="只运行一次")
     parser.add_argument("--sleep-min", type=int, default=5, help="循环模式最短等待秒数")
