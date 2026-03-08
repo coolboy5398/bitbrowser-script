@@ -6,3 +6,4 @@ __pycache__/
 /CardBin/config.json
 tokens/
 .ace-tool/
+invalid_codex_accounts.json
