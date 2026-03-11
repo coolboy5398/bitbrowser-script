@@ -6,6 +6,7 @@ import secrets
 import hashlib
 import base64
 import argparse
+import os
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -611,7 +612,26 @@ def main() -> None:
     parser.add_argument(
         "--sleep-max", type=int, default=30, help="循环模式最长等待秒数"
     )
+    parser.add_argument(
+        "--mgmt-url", default="http://127.0.0.1:8045", help="CLIProxyAPI 管理接口地址"
+    )
+    parser.add_argument(
+        "--mgmt-token", default=os.getenv("MGMT_TOKEN", ""), help="CLIProxyAPI 管理 Token"
+    )
     args = parser.parse_args()
+
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean_codex", "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                conf = json.load(f)
+            if isinstance(conf, dict):
+                if conf.get("base_url") and args.mgmt_url == "http://127.0.0.1:8045":
+                    args.mgmt_url = conf["base_url"]
+                if conf.get("cpa_password") and not args.mgmt_token:
+                    args.mgmt_token = conf["cpa_password"]
+        except Exception as e:
+            print(f"[Warning] 自动读取统一配置文件失败: {e}")
 
     sleep_min = max(1, args.sleep_min)
     sleep_max = max(sleep_min, args.sleep_max)
@@ -635,7 +655,6 @@ def main() -> None:
                 except Exception:
                     fname_email = "unknown"
 
-                import os
                 os.makedirs("tokens", exist_ok=True)
                 file_name = os.path.join("tokens", f"token_{fname_email}_{int(time.time())}.json")
 
@@ -643,6 +662,22 @@ def main() -> None:
                     f.write(token_json)
 
                 print(f"[*] 成功! Token 已保存至: {file_name}")
+
+                if args.mgmt_url and args.mgmt_token:
+                    base_name = os.path.basename(file_name)
+                    upload_url = f"{args.mgmt_url.rstrip('/')}/v0/management/auth-files?name={base_name}"
+                    try:
+                        headers = {
+                            "Authorization": f"Bearer {args.mgmt_token}",
+                            "Content-Type": "application/json"
+                        }
+                        resp_push = requests.post(upload_url, data=token_json.encode("utf-8"), headers=headers, timeout=15)
+                        if resp_push.status_code == 200:
+                            print("[*] 自动注入 CLIProxyAPI 成功，API已热加载生效！喵~")
+                        else:
+                            print(f"[-] 自动注入 CLIProxyAPI 失败: HTTP {resp_push.status_code} {resp_push.text}")
+                    except Exception as ex:
+                        print(f"[-] 自动注入过程发生错误: {ex}")
             else:
                 print("[-] 本次注册失败。")
 

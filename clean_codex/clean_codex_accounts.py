@@ -110,7 +110,7 @@ def choose_mode():
     print("1) 筛选并导出401账号")
     print("2) 检查401并删除")
     print("3) 删除账号（按 auth_index）")
-    print("4) 检查账号额度并导出json（七天滚动窗口，额度为这七天使用的百分比，已排序）")
+    print("4) 检查账号额度、自动启停(0禁用/>0启用)并导出json（按百分比排序）")
     print("5) 删除低额度，即高百分比占用的账号（used_percent >= 阈值）")
     print("0) 退出")
     while True:
@@ -149,6 +149,18 @@ def delete_auth_file(base_url, token, name, timeout):
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"DELETE {name} 失败: HTTP {resp.status_code} {resp.text[:200]}")
+    return True
+
+
+def toggle_auth_file(base_url, token, name, disabled, timeout):
+    resp = requests.patch(
+        f"{base_url}/v0/management/auth-files/status",
+        json={"name": name, "disabled": bool(disabled)},
+        headers=mgmt_headers(token),
+        timeout=timeout,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"PATCH {name} 状态失败: HTTP {resp.status_code} {resp.text[:200]}")
     return True
 
 
@@ -362,8 +374,37 @@ def action_delete_by_auth_index(base_url, token, timeout):
     print(f"删除完成: 成功 {ok}，失败 {fail}")
 
 
-def action_export_usage(results, output_usage, export_full=False):
+def action_export_usage(base_url, token, timeout, results, output_usage, export_full=False):
     ok_200 = [r for r in results if r.get("status_code") == 200]
+
+    # Check quotas and update status
+    disabled_count = 0
+    enabled_count = 0
+    fail_count = 0
+    
+    print("开始自动启停账号...")
+    for r in ok_200:
+        name = r.get("name")
+        if not name:
+            continue
+        
+        limit_reached = r.get("limit_reached")
+        used_percent = r.get("used_percent")
+        is_num = isinstance(used_percent, (int, float))
+        
+        should_disable = bool(limit_reached or (is_num and used_percent >= 100.0))
+        
+        try:
+            toggle_auth_file(base_url, token, name, should_disable, timeout)
+            if should_disable:
+                disabled_count += 1
+            else:
+                enabled_count += 1
+        except Exception as e:
+            print(f"[FAIL] 更新状态 {name}: {e}")
+            fail_count += 1
+            
+    print(f"启停处理完毕: 已禁用 {disabled_count} 个，保持/恢复启用 {enabled_count} 个，失败 {fail_count} 个")
 
     # used_percent 从大到小，None 放最后
     def sort_key_desc(r):
@@ -515,7 +556,7 @@ def main():
             action_check_401_and_delete(args.base_url, args.token, timeout, results, args.output_401)
         elif mode == "4":
             export_full = prompt_yes_no("是否导出全部信息？默认否（仅导出 used_percent 相关字段）", default=False)
-            action_export_usage(results, args.output_usage, export_full=export_full)
+            action_export_usage(args.base_url, args.token, timeout, results, args.output_usage, export_full=export_full)
         elif mode == "5":
             action_delete_by_threshold(args.base_url, args.token, timeout, results)
 
