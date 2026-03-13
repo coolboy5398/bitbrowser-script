@@ -197,3 +197,58 @@ class EmailProvider(ABC):
         print(f"   ⚠️  未能从邮件内容中提取Windsurf验证码")
         return None
 
+    def parse_ob1_code(self, email_content: dict) -> str:
+        """从邮件内容中解析OB-1 / WorkOS验证码
+
+        Args:
+            email_content: 邮件内容字典
+
+        Returns:
+            str: 验证码,失败返回None
+        """
+        if not email_content:
+            return None
+
+        from_addr = email_content.get('from', '')
+        subject = email_content.get('subject', '')
+        content = email_content.get('content', '')
+        html = email_content.get('html', '')
+
+        from_lower = from_addr.lower()
+        subject_lower = subject.lower()
+        full_content = f"{subject}\n{content}\n{html}"
+        full_lower = full_content.lower()
+
+        # 检查是否为 OB-1 / WorkOS 邮件
+        markers = [
+            'workos',
+            'openblocklabs',
+            'openblock labs',
+            'openblock',
+            'ob-1',
+            'obl',
+        ]
+        if not any(marker in from_lower or marker in subject_lower or marker in full_lower for marker in markers):
+            print("   ⚠️  不是OB-1邮件")
+            return None
+
+        print("   ✓ 识别为OB-1邮件")
+
+        patterns = [
+            r'verification code(?: is|:)?\s*<b>(\d{6})</b>',
+            r'verification code(?: is|:)?\s*(\d{6})',
+            r'one[- ]time code(?: is|:)?\s*(\d{6})',
+            r'验证码[：:]\s*(\d{6})',
+            r'\b(\d{6})\b',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, full_content, re.IGNORECASE)
+            if match:
+                code = match.group(1)
+                print(f"   ✓ 找到OB-1验证码: {code}")
+                return code
+
+        print("   ⚠️  未能从邮件内容中提取OB-1验证码")
+        return None
+

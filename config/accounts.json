@@ -1,0 +1,27 @@
+[
+  {
+    "email": "y9lnlfjnf7@dzhai.online",
+    "verification_email": "y9lnlfjnf7@dzhai.online",
+    "email_provider": "domain-imap",
+    "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InNzb19vaWRjX2tleV9wYWlyXzAxSzhZRFpTUUdRVFpQWE01WlM4ODZSODBBIn0.eyJpc3MiOiJodHRwczovL2F1dGgtcmVsYXkub3BlbmJsb2NrbGFicy5jb20vdXNlcl9tYW5hZ2VtZW50L2NsaWVudF8wMUs4WURaU1NLRE1LOEdZVEVIQkFXNE40UyIsInN1YiI6InVzZXJfMDFLS0pXTVZNVjVBRzFYUDBOVDg3QTRRTlMiLCJzaWQiOiJzZXNzaW9uXzAxS0tKV1BKR0pDVjVaTkVYUjJEVEJNWTM4IiwianRpIjoiMDFLS0pXUEpKWEVKRjlOMUtDNjhLVlQ1SjkiLCJleHAiOjE3NzM5ODY2MzEsImlhdCI6MTc3MzM4MTgzMX0.IkN-mlHPhtLfJkFTUZ6sJWTqI7-PWNL7MBwg2Ndrywhkb3Dc70Ru8ZwzTh5vD_9sbwNUriTDUs7NyCUySXaxIVnRpGo9LbkUHaA23kmOTxDU2P8cPrlstD0IGbLKK8TyHtzZID1saGD_qzX8gd2EDERSI_JsNNfJQ5RUUY0o5OAbOWFsE0K9KOaRq0pJo4drf7VwTmi3t8_gg8JGGwn9kAMpXFiSyJdnE5Gy06yHNvRrXGKYarOvJhYWnxsiS2MnSj1DejXbwofOC1v1G7SG1ZpKiA5jZsLC2mTrYvMbWo9FDMoefU6SxazKeRwholojZMLpgRpgHac5g424r9jsLA",
+    "refresh_token": "Qw9JTmUe0txp2WhETVn9R9Fqk",
+    "expires_at": 1773986654.7382326,
+    "org_id": "org_01KKJWPNFG5PQ26JTR7GEK5B58",
+    "org_name": "y9lnlfjnf7's Workspace",
+    "user_id": "user_01KKJWMVMV5AG1XP0NT87A4QNS",
+    "user_data": {
+      "object": "user",
+      "id": "user_01KKJWMVMV5AG1XP0NT87A4QNS",
+      "email": "y9lnlfjnf7@dzhai.online",
+      "email_verified": true,
+      "first_name": null,
+      "last_name": null,
+      "profile_picture_url": null,
+      "last_sign_in_at": "2026-03-13T06:03:33.621Z",
+      "locale": "zh-CN",
+      "created_at": "2026-03-13T06:02:54.981Z",
+      "updated_at": "2026-03-13T06:03:33.621Z",
+      "external_id": null
+    }
+  }
+]
