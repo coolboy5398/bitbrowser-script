@@ -16,6 +16,12 @@ EMAIL_POLL_CHUNK_TIMEOUT = 10
 # 代理（留空不用）
 PROXY_URL = ""
 
+# ob12api 账号推送（留空或禁用则跳过）
+OB12_PUSH_ENABLED = True
+OB12_PUSH_URL = "http://127.0.0.1:8081/api"
+OB12_PUSH_API_KEY = "sk-6c32794c97694ca08231a740fa098251"
+OB12_PUSH_TIMEOUT = 15
+
 # 输出路径
 import os
 ACCOUNTS_JSON = os.path.join(os.path.dirname(__file__), "..", "config", "accounts.json")

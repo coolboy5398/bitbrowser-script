@@ -38,6 +38,10 @@ from config import (
     EMAIL_CODE_TIMEOUT,
     EMAIL_CHECK_INTERVAL,
     EMAIL_POLL_CHUNK_TIMEOUT,
+    OB12_PUSH_ENABLED,
+    OB12_PUSH_URL,
+    OB12_PUSH_API_KEY,
+    OB12_PUSH_TIMEOUT,
 )
 
 
@@ -128,6 +132,83 @@ async def fetch_org(access_token: str, user_id: str) -> tuple[str, str]:
             if orgs:
                 return orgs[0].get("organizationId", ""), orgs[0].get("organizationName", "")
     return "", ""
+
+
+def _resolve_ob12_push_url() -> str:
+    """支持传完整 push 地址，或仅传服务基址"""
+    url = (OB12_PUSH_URL or "").strip()
+    if not url:
+        return ""
+    normalized = url.rstrip("/")
+    if normalized.endswith("/accounts/push"):
+        return normalized
+    return f"{normalized}/accounts/push"
+
+
+def _build_ob12_push_account(account: dict) -> dict:
+    """构造与 ob12api Account 兼容的账号数据"""
+    return {
+        "email": account.get("email", ""),
+        "access_token": account.get("access_token", ""),
+        "refresh_token": account.get("refresh_token", ""),
+        "expires_at": account.get("expires_at", 0),
+        "org_id": account.get("org_id", ""),
+        "org_name": account.get("org_name", ""),
+        "user_id": account.get("user_id", ""),
+        "user_data": account.get("user_data", {}),
+    }
+
+
+async def push_account_to_ob12(account: dict) -> bool:
+    """推送账号到 ob12api 的 /accounts/push 接口"""
+    if not OB12_PUSH_ENABLED:
+        print("[推送] 已禁用 ob12api 推送，跳过远端同步")
+        return False
+
+    push_url = _resolve_ob12_push_url()
+    if not push_url:
+        print("[推送] 未配置 OB12_PUSH_URL，跳过远端同步")
+        return False
+    if not OB12_PUSH_API_KEY:
+        print("[推送] 未配置 OB12_PUSH_API_KEY，跳过远端同步")
+        return False
+
+    payload = {"accounts": [_build_ob12_push_account(account)]}
+    headers = {
+        "Authorization": f"Bearer {OB12_PUSH_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(proxy=PROXY_URL or None, timeout=OB12_PUSH_TIMEOUT) as client:
+            resp = await client.post(push_url, json=payload, headers=headers)
+
+        try:
+            body = resp.json() if "json" in resp.headers.get("content-type", "") else {}
+        except json.JSONDecodeError:
+            body = {}
+
+        if resp.status_code != 200:
+            print(f"[推送] ob12api 推送失败: HTTP {resp.status_code} {resp.text[:200]}")
+            return False
+
+        if not body.get("ok", False):
+            print(f"[推送] ob12api 返回失败: {body or resp.text[:200]}")
+            return False
+
+        imported = body.get("imported", 0)
+        errors = body.get("errors", [])
+
+        if imported:
+            print(f"[推送] 已推送到 ob12api: imported={imported}")
+        elif errors:
+            print(f"[推送] ob12api 已响应，但未导入新账号: {errors}")
+        else:
+            print("[推送] ob12api 已响应，但未导入新账号（可能已存在）")
+        return True
+    except Exception as e:
+        print(f"[推送] ob12api 推送异常: {e}")
+        return False
 
 
 def save_account(account: dict):
@@ -271,7 +352,7 @@ async def register():
     else:
         print("    未找到组织（新用户可能需要先创建）")
 
-    # 4. 保存
+    # 4. 保存 + 推送
     account = {
         "email": user_email,
         "verification_email": auth_email,
@@ -284,7 +365,11 @@ async def register():
         "user_id": user_id,
         "user_data": user,
     }
+    print("[4] 保存账号到本地...")
     save_account(account)
+
+    print("[5] 推送账号到 ob12api...")
+    await push_account_to_ob12(account)
 
     print(f"\n{'=' * 50}")
     print("注册完成!")

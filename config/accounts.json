@@ -23,5 +23,30 @@
       "updated_at": "2026-03-13T06:03:33.621Z",
       "external_id": null
     }
+  },
+  {
+    "email": "jfmaxg8aqy@dzhai.online",
+    "verification_email": "jfmaxg8aqy@dzhai.online",
+    "email_provider": "domain-imap",
+    "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InNzb19vaWRjX2tleV9wYWlyXzAxSzhZRFpTUUdRVFpQWE01WlM4ODZSODBBIn0.eyJpc3MiOiJodHRwczovL2F1dGgtcmVsYXkub3BlbmJsb2NrbGFicy5jb20vdXNlcl9tYW5hZ2VtZW50L2NsaWVudF8wMUs4WURaU1NLRE1LOEdZVEVIQkFXNE40UyIsInN1YiI6InVzZXJfMDFLS0pYTU01WE1RQkdFOEs3QjlNNUo2WDEiLCJzaWQiOiJzZXNzaW9uXzAxS0tKWFBFQjJFRTdGMlRETkdEOVZIRUNRIiwianRpIjoiMDFLS0pYUEVDTlY4QlQyR05INkUxOUg4MzUiLCJleHAiOjE3NzM5ODc2NzUsImlhdCI6MTc3MzM4Mjg3NX0.RaAImaMCSopA1xFwHG6qg0_Dvf73lsDZHPmZXogIUbKcUqaDCJvp0t4fwOemvEpANydKkaA62RgDRn8HnmFS0X0eKgBzX6IrkG_fUwFuMX1DgaxzT4IINYIPxt-62SFiwIxa_PXxQAOBfcd2tayvjLEKyjb73VXqNGlaGw42rypzuACwtwYtI-8kvzP3gitw49Sic_WEkryCA6NOxUKDmrRvA6C_0o86o8WieZ_YK5srzVQwjn_1gGPkeHEBjeUsvFkthXRAZa6NkoC786XsyCj08TqwA3jXG5gp_bfi9uuEiS2_j4Qap3HHBepCHOePrN_Wc_gt7RdUYpfFzOx3Iw",
+    "refresh_token": "tRUSwtQ6zNfO2MGuhjMHYx3kV",
+    "expires_at": 1773987698.4682775,
+    "org_id": "org_01KKJXPGZDBTW96BTJH8AC48YR",
+    "org_name": "jfmaxg8aqy's Workspace",
+    "user_id": "user_01KKJXMM5XMQBGE8K7B9M5J6X1",
+    "user_data": {
+      "object": "user",
+      "id": "user_01KKJXMM5XMQBGE8K7B9M5J6X1",
+      "email": "jfmaxg8aqy@dzhai.online",
+      "email_verified": true,
+      "first_name": null,
+      "last_name": null,
+      "profile_picture_url": null,
+      "last_sign_in_at": "2026-03-13T06:20:58.619Z",
+      "locale": "zh-CN",
+      "created_at": "2026-03-13T06:20:15.922Z",
+      "updated_at": "2026-03-13T06:20:58.619Z",
+      "external_id": null
+    }
   }
 ]
