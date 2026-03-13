@@ -16,6 +16,11 @@ EMAIL_POLL_CHUNK_TIMEOUT = 10
 # 代理（留空不用）
 PROXY_URL = ""
 
+# Chrome 自动打开（用于 Device Auth 页面）
+BROWSER_AUTO_OPEN = True
+BROWSER_INCOGNITO = True
+BROWSER_REMOTE_DEBUGGING_PORT = 9223
+
 # ob12api 账号推送（留空或禁用则跳过）
 OB12_PUSH_ENABLED = True
 OB12_PUSH_URL = "http://127.0.0.1:8081/admin"

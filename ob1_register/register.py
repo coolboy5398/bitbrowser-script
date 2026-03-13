@@ -3,19 +3,22 @@
 流程：
 1. 创建 provider 邮箱地址
 2. 发起 WorkOS device auth，获取 user_code + verification_uri
-3. 用户在浏览器打开链接，并使用脚本生成的邮箱注册/登录
-4. 后台通过 providers 统一接口轮询邮箱并提取验证码
-5. 轮询 device auth 直到授权完成
-6. 获取 access_token + refresh_token
-7. 拉取 org 信息
-8. 保存到 accounts.json
+3. 脚本自动打开 Chrome 授权页（失败时回退到手动打开）
+4. 用户使用脚本生成的邮箱注册/登录
+5. 后台通过 providers 统一接口轮询邮箱并提取验证码
+6. 轮询 device auth 直到授权完成
+7. 获取 access_token + refresh_token
+8. 拉取 org 信息
+9. 保存到 accounts.json
 """
 
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
+from dataclasses import dataclass
 
 import httpx
 
@@ -24,6 +27,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from bitbrowser_api import CDPClient
+from chrome_utils import find_chrome_path, get_chrome_ws_url
 from providers import EmailProviderFactory
 
 from config import (
@@ -38,11 +43,89 @@ from config import (
     EMAIL_CODE_TIMEOUT,
     EMAIL_CHECK_INTERVAL,
     EMAIL_POLL_CHUNK_TIMEOUT,
+    BROWSER_AUTO_OPEN,
+    BROWSER_INCOGNITO,
+    BROWSER_REMOTE_DEBUGGING_PORT,
     OB12_PUSH_ENABLED,
     OB12_PUSH_URL,
     OB12_PUSH_API_KEY,
     OB12_PUSH_TIMEOUT,
 )
+
+
+@dataclass
+class BrowserSession:
+    """Chrome 自动化会话（为后续页面自动填写预留）"""
+
+    process: subprocess.Popen | None = None
+    ws_url: str = ""
+    cdp: CDPClient | None = None
+
+
+async def _open_browser_session(url: str) -> BrowserSession | None:
+    """打开 Chrome 并尽量建立 CDP 调试连接"""
+    if not BROWSER_AUTO_OPEN:
+        return None
+
+    chrome_path = find_chrome_path()
+    if not chrome_path:
+        print("[浏览器] 未找到 Chrome，改为手动打开链接")
+        return None
+
+    cmd = [
+        chrome_path,
+        f"--remote-debugging-port={BROWSER_REMOTE_DEBUGGING_PORT}",
+        "--new-window",
+    ]
+    if BROWSER_INCOGNITO:
+        cmd.append("--incognito")
+    cmd.append(url)
+
+    try:
+        print("[浏览器] 正在启动 Chrome...")
+        process = subprocess.Popen(cmd)
+    except Exception as e:
+        print(f"[浏览器] 启动 Chrome 失败: {e}")
+        return None
+
+    session = BrowserSession(process=process)
+    ws_url = await asyncio.to_thread(get_chrome_ws_url, BROWSER_REMOTE_DEBUGGING_PORT)
+    if not ws_url:
+        print("[浏览器] Chrome 已打开，但未建立调试连接（后续仍可手动操作页面）")
+        return session
+
+    session.ws_url = ws_url
+    try:
+        session.cdp = await asyncio.to_thread(CDPClient, ws_url)
+        print(f"[浏览器] 已连接调试会话: {ws_url}")
+    except Exception as e:
+        print(f"[浏览器] 调试会话连接失败: {e}")
+
+    return session
+
+
+def _close_browser_session(session: BrowserSession | None):
+    """关闭当前脚本建立的 CDP 连接"""
+    if not session or not session.cdp:
+        return
+    try:
+        session.cdp.close()
+    except Exception:
+        pass
+
+
+def _print_browser_hint(verification_uri: str, auth_email: str, user_code: str, browser_opened: bool):
+    """输出浏览器操作提示"""
+    if browser_opened:
+        print("\n>>> 已自动打开 Chrome 授权页，请使用下面这个邮箱注册/登录：")
+        print(f"    若页面未正常弹出，可手动打开: {verification_uri}")
+    else:
+        print("\n>>> 请在浏览器中打开以下链接，并使用下面这个邮箱注册/登录：")
+        print(f"    {verification_uri}")
+
+    print(f"    邮箱: {auth_email}")
+    if user_code:
+        print(f"    Device Code: {user_code}")
 
 
 def _http_client() -> httpx.AsyncClient:
@@ -300,11 +383,8 @@ async def register():
     device_code = auth_info["device_code"]
     interval = auth_info.get("interval", 5)
 
-    print("\n>>> 请在浏览器中打开以下链接，并使用下面这个邮箱注册/登录：")
-    print(f"    {verification_uri}")
-    print(f"    邮箱: {auth_email}")
-    if user_code:
-        print(f"    Device Code: {user_code}")
+    browser_session = await _open_browser_session(verification_uri)
+    _print_browser_hint(verification_uri, auth_email, user_code, browser_session is not None)
 
     # 2. 同时启动：邮箱接码 + device auth 轮询
     print("\n    等待授权中（同时监听 provider 邮箱验证码）...")
@@ -312,29 +392,35 @@ async def register():
     email_task = asyncio.create_task(_poll_email_code(provider, auth_email, stop_event))
     auth_task = asyncio.create_task(poll_device_auth(device_code, interval=interval))
 
-    done, _ = await asyncio.wait(
-        [email_task, auth_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    try:
+        done, _ = await asyncio.wait(
+            [email_task, auth_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-    result = None
-    if email_task in done and auth_task not in done:
-        code = email_task.result()
-        if code:
-            print(f"\n>>> 邮箱验证码: {code}  ← 请在浏览器中输入")
-        result = await auth_task
-    elif auth_task in done:
-        result = auth_task.result()
+        result = None
+        if email_task in done and auth_task not in done:
+            code = email_task.result()
+            if code:
+                print(f"\n>>> 邮箱验证码: {code}  ← 请在浏览器中输入")
+                if browser_session and browser_session.ws_url:
+                    print("[浏览器] 调试会话已就绪，后续可在此基础上继续补自动填码逻辑")
+            result = await auth_task
+        elif auth_task in done:
+            result = auth_task.result()
+            stop_event.set()
+            await asyncio.gather(email_task, return_exceptions=True)
+        else:
+            result = await auth_task
+
         stop_event.set()
-        await asyncio.gather(email_task, return_exceptions=True)
-    else:
-        result = await auth_task
 
-    stop_event.set()
-
-    if not result:
-        print("\n[失败] 未能完成授权")
-        return
+        if not result:
+            print("\n[失败] 未能完成授权")
+            return
+    finally:
+        stop_event.set()
+        _close_browser_session(browser_session)
 
     access_token = result["access_token"]
     refresh_token = result["refresh_token"]
