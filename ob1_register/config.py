@@ -18,7 +18,7 @@ PROXY_URL = ""
 
 # ob12api 账号推送（留空或禁用则跳过）
 OB12_PUSH_ENABLED = True
-OB12_PUSH_URL = "http://127.0.0.1:8081/api"
+OB12_PUSH_URL = "http://127.0.0.1:8081/admin"
 OB12_PUSH_API_KEY = "sk-6c32794c97694ca08231a740fa098251"
 OB12_PUSH_TIMEOUT = 15
 
