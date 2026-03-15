@@ -32,7 +32,8 @@ class DomainIMAPProvider(EmailProvider):
     
     # 可用域名列表（硬编码）
     AVAILABLE_DOMAINS = [
-        "xuanmu000001.xyz"
+        # "xuanmu000001.xyz"
+        "dzhai.online"
     ]
     
     def __init__(self, imap_config: dict = None):
