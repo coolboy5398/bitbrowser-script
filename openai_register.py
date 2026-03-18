@@ -482,17 +482,44 @@ def run(proxy: Optional[str]) -> Optional[str]:
             print(f"[Error] 注册表单提交失败: {signup_resp.text}")
             return None
 
-        otp_resp = s.post(
-            "https://auth.openai.com/api/accounts/passwordless/send-otp",
+        # 1. 生成随机密码并记录当前执行步骤
+        password = secrets.token_urlsafe(16)
+        print(f"[*] 生成密码: {password}")
+
+        # 2. 封装注册请求的 JSON Payload
+        register_body = json.dumps({
+            "password": password, 
+            "username": email
+        })
+
+        # 3. 发起「提交注册信息」请求 (POST)
+        pwd_resp = s.post(
+            "https://auth.openai.com/api/accounts/user/register",
             headers={
                 "referer": "https://auth.openai.com/create-account/password",
                 "accept": "application/json",
                 "content-type": "application/json",
             },
+            data=register_body,
+            timeout=15,
         )
-        print(f"[*] 验证码发送状态: {otp_resp.status_code}")
-        if otp_resp.status_code != 200:
-            print(f"[Error] 验证码发送失败: {otp_resp.text}")
+        print(f"[*] 提交注册信息(附加密码)状态: {pwd_resp.status_code}")
+        if pwd_resp.status_code not in (200, 201):
+            print(f"[Error] 带有密码的注册请求提交失败: {pwd_resp.text}")
+            return None
+
+        # 4. 发起「发送邮箱验证码」请求 (GET)
+        otp_send_resp = s.get(
+            "https://auth.openai.com/api/accounts/email-otp/send",
+            headers={
+                "referer": "https://auth.openai.com/create-account/password",
+                "accept": "application/json",
+            },
+            timeout=15,
+        )
+        print(f"[*] 验证码发送状态: {otp_send_resp.status_code}")
+        if otp_send_resp.status_code != 200:
+            print(f"[Error] 验证码发送失败: {otp_send_resp.text}")
             return None
 
         code = get_oai_code(dev_token, email, proxies)
