@@ -203,18 +203,43 @@ DEFAULT_PRECHECK_TIMEOUT = 12
 DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
+DEFAULT_TARGET_ACCOUNT_COUNT = 100
 
 
 def _b64url_no_pad(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def count_matching_auth_files(
+    base_url: str,
+    token: str,
+    timeout: int,
+    target_type: str,
+    provider: Optional[str],
+) -> int:
+    files = fetch_auth_files(base_url, token, timeout)
+    target_type_lower = str(target_type or "").lower()
+    provider_lower = str(provider or "").lower()
+    count = 0
+
+    for item in files:
+        item_type = get_item_type(item).lower()
+        item_provider = str(item.get("provider") or "").lower()
+        if target_type_lower and item_type != target_type_lower:
+            continue
+        if provider_lower and item_provider != provider_lower:
+            continue
+        count += 1
+
+    return count
+
+
+def _random_state() -> str:
+    return _b64url_no_pad(secrets.token_bytes(32))
+
+
 def _sha256_b64url_no_pad(s: str) -> str:
     return _b64url_no_pad(hashlib.sha256(s.encode("ascii")).digest())
-
-
-def _random_state(nbytes: int = 16) -> str:
-    return secrets.token_urlsafe(nbytes)
 
 
 def _pkce_verifier() -> str:
@@ -557,6 +582,97 @@ def preclean_401_and_delete(
     except Exception as e:
         print(f"[Warning] 注册前401清理失败: {e}")
         return {"detected": 0, "deleted": 0, "failed": 0}
+
+
+def register_until_target_count(
+    *,
+    proxy: Optional[str],
+    base_url: str,
+    token: str,
+    timeout: int,
+    target_type: str,
+    provider: Optional[str],
+    target_count: int,
+) -> int:
+    if not base_url or not token:
+        print("[*] 跳过补量：未配置 CLIProxyAPI 管理接口或 Token")
+        return 0
+
+    desired_count = max(0, int(target_count or 0))
+    if desired_count <= 0:
+        return 0
+
+    try:
+        current_count = count_matching_auth_files(
+            base_url=base_url,
+            token=token,
+            timeout=timeout,
+            target_type=target_type,
+            provider=provider,
+        )
+    except Exception as e:
+        print(f"[Warning] 统计现有账号数失败，跳过补量: {e}")
+        return 0
+
+    deficit = max(0, desired_count - current_count)
+    print(f"[*] 当前符合条件账号数: {current_count}，目标数: {desired_count}")
+    if deficit <= 0:
+        print("[*] 现有账号数量已满足目标，无需补量。")
+        return 0
+
+    print(f"[*] 删除401后数量不足，开始补充差额: {deficit}")
+    success = 0
+
+    while success < deficit:
+        attempt_no = success + 1
+        print(f"[*] 补量进度: {attempt_no}/{deficit}")
+        try:
+            token_json = run(proxy)
+            if not token_json:
+                print("[-] 本次补量注册失败。")
+                continue
+
+            try:
+                t_data = json.loads(token_json)
+                fname_email = t_data.get("email", "unknown").replace("@", "_")
+            except Exception:
+                fname_email = "unknown"
+
+            os.makedirs("tokens", exist_ok=True)
+            file_name = os.path.join("tokens", f"token_{fname_email}_{int(time.time())}.json")
+
+            with open(file_name, "w", encoding="utf-8") as f:
+                f.write(token_json)
+
+            print(f"[*] 补量成功! Token 已保存至: {file_name}")
+
+            base_name = os.path.basename(file_name)
+            upload_url = f"{base_url.rstrip('/')}/v0/management/auth-files?name={base_name}"
+            try:
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+                resp_push = requests.post(
+                    upload_url,
+                    data=token_json.encode("utf-8"),
+                    headers=headers,
+                    timeout=15,
+                )
+                if resp_push.status_code == 200:
+                    success += 1
+                    print("[*] 补量账号已自动注入 CLIProxyAPI，API已热加载生效！喵~")
+                else:
+                    print(
+                        f"[-] 补量账号自动注入 CLIProxyAPI 失败: HTTP {resp_push.status_code} {resp_push.text}"
+                    )
+            except Exception as ex:
+                print(f"[-] 补量账号自动注入过程发生错误: {ex}")
+        except Exception as e:
+            print(f"[Error] 补量过程中发生未捕获异常: {e}")
+
+    print(f"[*] 补量完成，本次共补充 {success} 个账号。")
+    return success
 
 
 def _post_form(
@@ -964,6 +1080,12 @@ def main() -> None:
         default=DEFAULT_PRECHECK_OUTPUT_401,
         help="注册前401账号导出文件路径",
     )
+    parser.add_argument(
+        "--target-account-count",
+        type=int,
+        default=DEFAULT_TARGET_ACCOUNT_COUNT,
+        help="删除401后希望维持的目标账号数",
+    )
     args = parser.parse_args()
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean_codex", "config.json")
@@ -1001,6 +1123,15 @@ def main() -> None:
             user_agent=args.preclean_user_agent,
             chatgpt_account_id=args.preclean_chatgpt_account_id,
             output_401=args.preclean_output_401,
+        )
+        register_until_target_count(
+            proxy=args.proxy,
+            base_url=args.mgmt_url,
+            token=args.mgmt_token,
+            timeout=args.preclean_timeout,
+            target_type=args.preclean_target_type,
+            provider=args.preclean_provider,
+            target_count=args.target_account_count,
         )
 
     while True:
