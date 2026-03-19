@@ -1133,6 +1133,7 @@ def main() -> None:
             provider=args.preclean_provider,
             target_count=args.target_account_count,
         )
+        return 0
 
     while True:
         count += 1
