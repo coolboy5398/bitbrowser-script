@@ -35,6 +35,17 @@ DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 DEFAULT_TARGET_ACCOUNT_COUNT = 100
+DEFAULT_EMAIL_PROVIDERS = ["mailtm", "chatgpt", "chat-tempmail"]
+
+
+
+def normalize_email_providers(email_providers: Optional[List[str]] = None) -> List[str]:
+    provider_names = [
+        str(name).strip()
+        for name in (email_providers or DEFAULT_EMAIL_PROVIDERS)
+        if str(name).strip()
+    ]
+    return provider_names or DEFAULT_EMAIL_PROVIDERS.copy()
 
 
 def _b64url_no_pad(raw: bytes) -> str:
@@ -424,6 +435,7 @@ def register_until_target_count(
     target_type: str,
     provider: Optional[str],
     target_count: int,
+    email_providers: Optional[List[str]] = None,
 ) -> int:
     if not base_url or not token:
         print("[*] 跳过补量：未配置 CLIProxyAPI 管理接口或 Token")
@@ -452,13 +464,20 @@ def register_until_target_count(
         return 0
 
     print(f"[*] 删除401后数量不足，开始补充差额: {deficit}")
+    provider_names = normalize_email_providers(email_providers)
     success = 0
+    attempt_count = 0
 
     while success < deficit:
+        attempt_count += 1
         attempt_no = success + 1
-        print(f"[*] 补量进度: {attempt_no}/{deficit}")
+        provider_name = provider_names[(attempt_count - 1) % len(provider_names)]
+        print(
+            f"[*] 补量进度: {attempt_no}/{deficit}，第 {attempt_count} 次尝试，"
+            f"本次邮箱服务: {provider_name}"
+        )
         try:
-            token_json = run(proxy)
+            token_json = run(proxy, email_provider_name=provider_name)
             if not token_json:
                 print("[-] 本次补量注册失败。")
                 continue
@@ -630,7 +649,7 @@ def submit_callback_url(
 # ==========================================
 
 
-def run(proxy: Optional[str]) -> Optional[str]:
+def run(proxy: Optional[str], email_provider_name: Optional[str] = None) -> Optional[str]:
     proxies: Any = None
     if proxy:
         proxies = {"http": proxy, "https": proxy}
@@ -649,9 +668,20 @@ def run(proxy: Optional[str]) -> Optional[str]:
         print(f"[Error] 网络连接检查失败: {e}")
         return None
 
-    email_provider = EmailProviderFactory.create("mailtm", proxies=proxies, timeout=15)
-    email = email_provider.get_email_from_api()
+    provider_name = str(email_provider_name or DEFAULT_EMAIL_PROVIDERS[0]).strip()
+    print(f"[*] 本次使用邮箱服务: {provider_name}")
+
+    try:
+        email_provider = EmailProviderFactory.create(
+            provider_name, proxies=proxies, timeout=15
+        )
+        email = email_provider.get_email_from_api()
+    except Exception as e:
+        print(f"[Error] 邮箱服务 {provider_name} 调用失败: {e}")
+        return None
+
     if not email:
+        print(f"[Error] 邮箱服务 {provider_name} 未获取到邮箱")
         return None
     print(f"[*] 成功获取邮箱: {email}")
 
@@ -923,6 +953,11 @@ def main() -> None:
         default=DEFAULT_TARGET_ACCOUNT_COUNT,
         help="删除401后希望维持的目标账号数",
     )
+    parser.add_argument(
+        "--email-providers",
+        default=",".join(DEFAULT_EMAIL_PROVIDERS),
+        help="邮箱服务顺序，逗号分隔，例如 mailtm,chatgpt,chat-tempmail",
+    )
     args = parser.parse_args()
 
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "clean_codex", "config.json")
@@ -944,9 +979,13 @@ def main() -> None:
 
     sleep_min = max(1, args.sleep_min)
     sleep_max = max(sleep_min, args.sleep_max)
+    email_providers = normalize_email_providers(
+        [name.strip() for name in str(args.email_providers or "").split(",") if name.strip()]
+    )
 
     count = 0
     print("[Info] Yasal's Seamless OpenAI Auto-Registrar Started for ZJH")
+    print(f"[*] 当前邮箱服务顺序: {', '.join(email_providers)}")
 
     if not args.skip_preclean_401:
         preclean_401_and_delete(
@@ -969,6 +1008,7 @@ def main() -> None:
             target_type=args.preclean_target_type,
             provider=args.preclean_provider,
             target_count=args.target_account_count,
+            email_providers=email_providers,
         )
         return 0
 
@@ -979,7 +1019,9 @@ def main() -> None:
         )
 
         try:
-            token_json = run(args.proxy)
+            provider_name = email_providers[(count - 1) % len(email_providers)]
+            print(f"[*] 本次轮换邮箱服务: {provider_name}")
+            token_json = run(args.proxy, email_provider_name=provider_name)
 
             if token_json:
                 try:
