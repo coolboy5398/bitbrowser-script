@@ -13,6 +13,7 @@ from .email_provider import EmailProvider
 from .chatgpt_mail_provider import ChatGPTMailProvider
 from .chat_tempmail_provider import ChatTempMailProvider
 from .domain_imap_provider import DomainIMAPProvider
+from .duckmail_provider import DuckMailProvider
 from .mailtm_provider import MailTmProvider
 from .tempmail_lol_provider import TempMailLolProvider
 
@@ -33,6 +34,11 @@ PROVIDERS = {
         'name': '域名IMAP邮箱',
         'class': DomainIMAPProvider,
         'description': '自定义域名邮箱 + QQ邮箱IMAP接收服务'
+    },
+    'duckmail': {
+        'name': 'DuckMail临时邮箱',
+        'class': DuckMailProvider,
+        'description': 'https://api.duckmail.sbs/ 临时邮箱服务'
     },
     'mailtm': {
         'name': 'Mail.tm临时邮箱',
