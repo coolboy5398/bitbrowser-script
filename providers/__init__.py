@@ -14,6 +14,7 @@ from .chatgpt_mail_provider import ChatGPTMailProvider
 from .chat_tempmail_provider import ChatTempMailProvider
 from .domain_imap_provider import DomainIMAPProvider
 from .mailtm_provider import MailTmProvider
+from .tempmail_lol_provider import TempMailLolProvider
 from .email_provider_factory import EmailProviderFactory, PROVIDERS
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     'ChatTempMailProvider',
     'DomainIMAPProvider',
     'MailTmProvider',
+    'TempMailLolProvider',
     'EmailProviderFactory',
     'PROVIDERS',
 ]

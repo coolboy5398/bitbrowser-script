@@ -15,59 +15,13 @@ from dataclasses import dataclass
 
 from curl_cffi import requests
 
+from providers import EmailProviderFactory
+
 # ====================== 强密码生成 ======================
 def get_password() -> str:
     chars = string.ascii_letters + string.digits
     base_pwd = ''.join(random.choices(chars, k=10))
     return base_pwd + "Aa1@!"
-
-# ====================== 【TempMail.lol 2026 完整版】邮箱模块（已修复代理） ======================
-class Message:
-    def __init__(self, data: dict):
-        self.from_addr = data.get("from", "")
-        self.subject = data.get("subject", "")
-        self.body = data.get("body", "") or ""
-        self.html_body = data.get("html", "") or ""
-
-class EMail:
-    def __init__(self, proxies: dict = None):
-        self.s = requests.Session(proxies=proxies, impersonate="chrome")  # ← 关键修复：走代理 + chrome指纹
-        self.s.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        })
-        # 创建随机邮箱（官方 2026 API）
-        r = self.s.post("https://api.tempmail.lol/v2/inbox/create", json={})
-        r.raise_for_status()
-        data = r.json()
-        self.address = data["address"]
-        self.token = data["token"]
-        print(f"[+] 生成邮箱: {self.address} (TempMail.lol)")
-        print(f"[*] 自动轮询已启动（token 已保存）")
-
-    def _get_messages(self):
-        r = self.s.get(f"https://api.tempmail.lol/v2/inbox?token={self.token}")
-        r.raise_for_status()
-        return r.json().get("emails", [])
-
-    def wait_for_message(self, timeout=600, filter_func=None):
-        print("[*] 等待 OpenAI 验证码（TempMail.lol 轮询，最多 10 分钟）")
-        start = time.time()
-        while time.time() - start < timeout:
-            msgs = self._get_messages()
-            print(f"[*] 已轮询 {int(time.time()-start)} 秒，收到 {len(msgs)} 封邮件...")
-            for msg_data in msgs:
-                msg = Message(msg_data)
-                if not filter_func or filter_func(msg):
-                    print(f"[+] 收到匹配邮件: {msg.subject}")
-                    return msg
-            time.sleep(5)
-        raise TimeoutError("[-] 10 分钟内未收到 OpenAI 验证码")
-
-def get_email(proxies=None):
-    inbox = EMail(proxies=proxies)
-    return inbox.address, inbox
 
 # ====================== OAuth 模块（完整保留） ======================
 AUTH_URL = "https://auth.openai.com/oauth/authorize"
@@ -217,7 +171,10 @@ def run(proxy: str) -> str:
 
     # 2. 生成邮箱（TempMail.lol，走代理）
     print("[*] 正在生成随机私有域名邮箱...")
-    email, inbox = get_email(proxies=proxies)
+    email_provider = EmailProviderFactory.create("tempmail-lol", proxies=proxies)
+    email = email_provider.get_email_from_api()
+    if not email:
+        return "[!] 错误：未能生成 TempMail.lol 邮箱"
     print(f"[+] 成功生成邮箱: {email}")
     
     # 3. OAuth 初始化
@@ -275,14 +232,29 @@ def run(proxy: str) -> str:
     
     # 等待 OTP
     print("[*] 正在等待邮箱 OTP 验证码...")
-    def otp_filter(obj):
-        subj = getattr(obj, "subject", "") or ""
-        return any(kw in subj.lower() for kw in ["openai", "验证码", "verification", "code", "otp"])
-    msg = inbox.wait_for_message(timeout=300, filter_func=otp_filter)
-    code_match = re.search(r'\b(\d{6})\b', msg.body or msg.html_body or msg.subject or "")
-    if not code_match:
+    def otp_filter(email_content):
+        email_content = email_content or {}
+        subject = str(email_content.get("subject") or "")
+        sender = str(email_content.get("from") or "")
+        content = str(email_content.get("content") or "")
+        html = str(email_content.get("html") or "")
+        full_content = f"{subject}\n{content}\n{html}".lower()
+        subject_lower = subject.lower()
+        sender_lower = sender.lower()
+        return any(
+            kw in sender_lower or kw in subject_lower or kw in full_content
+            for kw in ["openai", "验证码", "verification", "code", "otp"]
+        )
+
+    email_content = email_provider.get_latest_email_from_api(
+        email,
+        timeout=300,
+        check_interval=5,
+        filter_func=otp_filter,
+    )
+    otp_code = email_provider.parse_openai_code(email_content)
+    if not otp_code:
         return "[!] 未在邮件中找到 6 位验证码"
-    otp_code = code_match.group(1)
     print(f"[+] 提取到 OTP: {otp_code}")
     
     # 验证 OTP
