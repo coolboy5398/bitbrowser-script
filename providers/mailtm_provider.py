@@ -178,7 +178,7 @@ class MailTmProvider(EmailProvider):
         timeout: int = 120,
         check_interval: int = 3,
     ) -> dict:
-        """轮询获取最新的 OpenAI 邮件内容"""
+        """轮询获取最新邮件内容"""
         if not self.current_token:
             print("   ✗ Mail.tm Token 不存在，请先调用 get_email_from_api()")
             return None
@@ -187,7 +187,7 @@ class MailTmProvider(EmailProvider):
         seen_ids: set[str] = set()
         deadline = time.time() + max(1, int(timeout or 1))
 
-        print(f"   📧 正在等待邮箱 {email_address} 的 OpenAI 邮件...")
+        print(f"   📧 正在等待邮箱 {email_address} 的邮件...")
 
         while time.time() < deadline:
             try:
@@ -223,24 +223,12 @@ class MailTmProvider(EmailProvider):
                     if not email_content:
                         continue
 
-                    sender = str(email_content.get("from") or "").lower()
-                    merged_content = "\n".join(
-                        [
-                            str(email_content.get("subject") or ""),
-                            str(email_content.get("content") or ""),
-                            str(email_content.get("html") or ""),
-                        ]
-                    ).lower()
-
-                    if "openai" not in sender and "openai" not in merged_content:
-                        continue
-
-                    print(f"   ✓ 收到目标邮件: {email_content.get('subject') or '(无主题)'}")
+                    print(f"   ✓ 收到邮件: {email_content.get('subject') or '(无主题)'}")
                     return email_content
             except Exception as e:
                 print(f"   ⚠️  Mail.tm 拉取邮件失败: {e}")
 
             time.sleep(max(1, int(check_interval or 3)))
 
-        print("   ✗ 等待 OpenAI 邮件超时")
+        print("   ✗ 等待邮件超时")
         return None
