@@ -1,6 +1,6 @@
 {
-  "base_url": "http://127.0.0.1:8045",
-  "cpa_password": "123456",
+  "base_url": "http://129.204.188.189:10291",
+  "cpa_password": "3205399Dongzheng@",
   "target_type": "codex",
   "provider": "",
   "workers": 200,

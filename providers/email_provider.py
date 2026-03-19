@@ -252,3 +252,48 @@ class EmailProvider(ABC):
         print("   ⚠️  未能从邮件内容中提取OB-1验证码")
         return None
 
+    def parse_openai_code(self, email_content: dict) -> str:
+        """从邮件内容中解析 OpenAI 验证码
+
+        Args:
+            email_content: 邮件内容字典
+
+        Returns:
+            str: 验证码,失败返回None
+        """
+        if not email_content:
+            return None
+
+        from_addr = email_content.get('from', '')
+        subject = email_content.get('subject', '')
+        content = email_content.get('content', '')
+        html = email_content.get('html', '')
+
+        full_content = f"{subject}\n{content}\n{html}"
+        from_lower = from_addr.lower()
+        subject_lower = subject.lower()
+        full_lower = full_content.lower()
+
+        if 'openai' not in from_lower and 'openai' not in subject_lower and 'openai' not in full_lower:
+            print("   ⚠️  不是OpenAI邮件")
+            return None
+
+        print("   ✓ 识别为OpenAI邮件")
+
+        patterns = [
+            r'验证码[：:]\s*(\d{6})',
+            r'verification code(?: is|:)?\s*(\d{6})',
+            r'code(?: is|:)?\s*(\d{6})',
+            r'\b(\d{6})\b',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, full_content, re.IGNORECASE)
+            if match:
+                code = match.group(1)
+                print(f"   ✓ 找到OpenAI验证码: {code}")
+                return code
+
+        print("   ⚠️  未能从邮件内容中提取OpenAI验证码")
+        return None
+

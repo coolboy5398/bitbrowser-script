@@ -13,6 +13,7 @@ from .email_provider import EmailProvider
 from .chatgpt_mail_provider import ChatGPTMailProvider
 from .chat_tempmail_provider import ChatTempMailProvider
 from .domain_imap_provider import DomainIMAPProvider
+from .mailtm_provider import MailTmProvider
 
 
 # 邮箱服务配置字典
@@ -31,6 +32,11 @@ PROVIDERS = {
         'name': '域名IMAP邮箱',
         'class': DomainIMAPProvider,
         'description': '自定义域名邮箱 + QQ邮箱IMAP接收服务'
+    },
+    'mailtm': {
+        'name': 'Mail.tm临时邮箱',
+        'class': MailTmProvider,
+        'description': 'https://api.mail.tm/ 临时邮箱服务'
     },
     # 未来可以添加更多邮箱服务
     # 'tempmail': {
