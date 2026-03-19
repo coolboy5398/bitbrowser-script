@@ -35,7 +35,7 @@ DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 DEFAULT_TARGET_ACCOUNT_COUNT = 100
-DEFAULT_EMAIL_PROVIDERS = ["mailtm","tempmail-lol"]
+DEFAULT_EMAIL_PROVIDERS = ["chatgpt","tempmail-lol","mailtm"]
 
 
 

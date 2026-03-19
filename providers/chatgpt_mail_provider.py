@@ -3,16 +3,15 @@
 """
 ChatGPT临时邮箱服务提供者
 
-实现 https://mail.chatgpt.org.uk/ 临时邮箱服务
-
-作者: AI Assistant
-版本: 1.0
+基于 https://mail.chatgpt.org.uk/api 的公开 API 实现
 """
 
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
-from urllib.parse import quote
 import json
+import time
+from typing import Any, Dict, List, Optional
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from .email_provider import EmailProvider
 
@@ -20,22 +19,48 @@ from .email_provider import EmailProvider
 class ChatGPTMailProvider(EmailProvider):
     """ChatGPT临时邮箱服务提供者
 
-    实现 https://mail.chatgpt.org.uk/ 临时邮箱服务
-    支持网页方式和API方式
+    基于 https://mail.chatgpt.org.uk/api 的公开 API 实现。
+    支持通过 API 生成邮箱、轮询邮箱列表并读取单封邮件详情。
     """
 
-    def __init__(self, api_key: str = None):
-        """初始化ChatGPTMail服务
+    DEFAULT_TIMEOUT = 15
+    DEFAULT_POLL_TIMEOUT = 120
+    DEFAULT_CHECK_INTERVAL = 3
+    USER_AGENT = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/134.0.0.0 Safari/537.36"
+    )
+
+    def __init__(
+        self,
+        api_key: str = "sk-57pxXsUy7hhJ",
+        proxies: Any = None,
+        timeout: int = 15,
+        prefix: str = None,
+        domain: str = None,
+    ):
+        """初始化 ChatGPTMail 服务
 
         Args:
-            api_key: API密钥,如果不提供则使用测试密钥 'gpt-test'
+            api_key: API 密钥，不提供时默认使用官方公开测试密钥 `gpt-test`
+            proxies: 代理配置，兼容 [`EmailProviderFactory.create()`](providers/email_provider_factory.py:63)
+            timeout: HTTP 请求超时时间（秒）
+            prefix: 可选的邮箱前缀，提供后将改用 POST 方式生成邮箱
+            domain: 可选的邮箱域名，提供后将改用 POST 方式生成邮箱
         """
         self.base_url = "https://mail.chatgpt.org.uk"
-        self.api_url = f"{self.base_url}/api/emails"
-        self.api_key = api_key or "gpt-v9b4n2qwer"  # 默认使用测试密钥
+        self.api_base_url = f"{self.base_url}/api"
+        self.api_url = f"{self.api_base_url}/emails"
+        self.api_key = (api_key or "gpt-test").strip()
+        self.proxies = proxies
+        self.timeout = max(1, int(timeout or self.DEFAULT_TIMEOUT))
+        self.prefix = (prefix or "").strip()
+        self.domain = (domain or "").strip()
+        self.current_email = ""
 
     def needs_browser_page(self) -> bool:
-        """ChatGPT邮箱需要打开浏览器页面获取邮箱"""
+        """ChatGPT邮箱不需要打开浏览器页面"""
         return False
 
     def get_page_url(self) -> str:
@@ -43,811 +68,400 @@ class ChatGPTMailProvider(EmailProvider):
         return f"{self.base_url}/"
 
     def get_domain_patterns(self) -> list:
-        """获取域名匹配模式
-
-        返回用于识别ChatGPT邮箱页面的域名模式
-        """
+        """获取域名匹配模式"""
         return ["chatgpt.org.uk"]
 
-    def _detect_cloudflare(self, cdp, session_id) -> bool:
-        """检测页面是否有Cloudflare验证
+    def _build_headers(self, *, use_json: bool = False) -> Dict[str, str]:
+        """构建 API 请求头"""
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": self.USER_AGENT,
+        }
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        if use_json:
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        return headers
 
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-
-        Returns:
-            bool: True表示检测到Cloudflare验证，False表示没有
-        """
-        print("   🔍 检测Cloudflare验证...")
-
-        try:
-            # 使用JavaScript检查页面特征
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        // 检查页面标题
-                        const title = document.title || '';
-                        if (title.includes('Just a moment')) {
-                            return 'title';
-                        }
-
-                        // 检查页面文本内容
-                        const bodyText = document.body.innerText || document.body.textContent || '';
-                        if (bodyText.includes('Enable JavaScript and cookies to continue')) {
-                            return 'text';
-                        }
-                        if (bodyText.includes('Checking your browser')) {
-                            return 'text';
-                        }
-
-                        // 检查Cloudflare特征元素
-                        const cfElements = document.querySelectorAll('[id*="cf-"], [class*="cf-"]');
-                        if (cfElements.length > 0) {
-                            return 'element';
-                        }
-
-                        return null;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                detection = result["result"]["result"].get("value")
-                if detection:
-                    print(f"   ✓ 检测到Cloudflare验证（特征：{detection}）")
-                    return True
-
-            print("   ✓ 未检测到Cloudflare验证")
-            return False
-
-        except Exception as e:
-            print(f"   ⚠️  检测出错: {e}，假设无Cloudflare")
-            return False
-
-    def _bypass_cloudflare(self, cdp, session_id, timeout=30) -> bool:
-        """自动绕过Cloudflare验证
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-            timeout: 超时时间（秒），默认30秒
-
-        Returns:
-            bool: True表示绕过成功，False表示失败
-        """
-        print("   🔓 开始绕过Cloudflare验证...")
+    def _read_response_json(self, response, url: str) -> Dict[str, Any]:
+        """读取并解析 JSON 响应"""
+        raw_text = response.read().decode("utf-8", errors="replace")
+        if not raw_text:
+            return {}
 
         try:
-            import time
+            data = json.loads(raw_text)
+            return data if isinstance(data, dict) else {"data": data}
+        except json.JSONDecodeError as exc:
+            preview = raw_text[:200].replace("\n", " ")
+            raise ValueError(f"API返回了无效JSON: {url} -> {preview}") from exc
 
-            # 0. 先等待一下，让页面完全加载
-            print("   ⏳ 等待页面加载...")
-            time.sleep(2)
+    def _request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        query: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """发送 API 请求并返回 JSON 数据"""
+        url = f"{self.api_base_url}{path}"
 
-            # 1. 启用DOM域
-            cdp.send("DOM.enable", {}, session_id=session_id)
+        clean_query = {}
+        for key, value in (query or {}).items():
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                clean_query[key] = text
+        if clean_query:
+            url = f"{url}?{urlencode(clean_query)}"
 
-            # 2. 查找Cloudflare验证框元素
-            print("   🔍 查找验证框元素...")
-            result = cdp.send("DOM.getDocument", {"depth": -1}, session_id=session_id)
-            if not result or "result" not in result:
-                print("   ✗ 无法获取DOM文档")
-                return False
+        body = None
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
 
-            root_node_id = result["result"]["root"]["nodeId"]
+        req = Request(url, data=body, method=method)
+        for header_name, header_value in self._build_headers(use_json=payload is not None).items():
+            req.add_header(header_name, header_value)
 
-            # 支持多种Cloudflare验证框选择器（按优先级排序）
-            selectors = [
-                'input[type="checkbox"]',       # Cloudflare checkbox（最优先）
-                'iframe[src*="challenges.cloudflare.com"]',  # Cloudflare iframe
-                'div[id*="cf-"][id*="challenge"]',  # 同时包含cf和challenge
-                'div[class*="cf-"][class*="challenge"]',
-                'div[id*="cf-"]',               # Cloudflare元素
-                'div[class*="cf-"]',
-            ]
+        if self.proxies:
+            opener = build_opener(ProxyHandler(self.proxies))
+            response = opener.open(req, timeout=self.timeout)
+        else:
+            response = urlopen(req, timeout=self.timeout)
 
-            node_id = None
-            found_selector = None
+        with response as response_obj:
+            return self._read_response_json(response_obj, url)
 
-            for selector in selectors:
-                result = cdp.send("DOM.querySelectorAll", {
-                    "nodeId": root_node_id,
-                    "selector": selector
-                }, session_id=session_id)
+    def _extract_error_message(self, data: Any, fallback: str = "请求失败") -> str:
+        """从 API 响应中提取错误信息"""
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, str) and error.strip():
+                return error.strip()
+            if isinstance(error, dict):
+                for key in ("message", "error", "detail"):
+                    value = error.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+        return fallback
 
-                if result and "result" in result and result["result"].get("nodeIds"):
-                    node_ids = result["result"]["nodeIds"]
-                    if node_ids:
-                        # 尝试每个找到的元素，直到找到可以获取位置的
-                        for nid in node_ids:
-                            # 先检查能否获取位置
-                            box_result = cdp.send("DOM.getBoxModel", {"nodeId": nid}, session_id=session_id)
-                            if box_result and "result" in box_result:
-                                node_id = nid
-                                found_selector = selector
-                                print(f"   ✓ 找到可用验证框元素（选择器：{selector}）")
-                                break
+    def _extract_response_data(self, data: Dict[str, Any]) -> Any:
+        """提取响应中的 data 字段"""
+        if isinstance(data, dict):
+            return data.get("data")
+        return None
 
-                        if node_id:
-                            break
+    def _as_text(self, value: Any) -> str:
+        """将任意值安全转换为字符串"""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        return ""
 
-            if not node_id:
-                print("   ⚠️  未找到可用验证框元素")
-                print("   💡 尝试使用JavaScript直接点击...")
+    def _pick_text(self, source: Any, *keys: str) -> str:
+        """从字典中按顺序获取非空文本字段"""
+        if not isinstance(source, dict):
+            return ""
 
-                # 尝试使用JavaScript直接查找并点击
-                js_result = cdp.send("Runtime.evaluate", {
-                    "expression": """
-                        (() => {
-                            // 查找Cloudflare验证框
-                            const checkbox = document.querySelector('input[type="checkbox"]');
-                            if (checkbox && checkbox.offsetParent !== null) {
-                                checkbox.click();
-                                return 'clicked_checkbox';
-                            }
+        for key in keys:
+            if key not in source:
+                continue
+            text = self._as_text(source.get(key))
+            if text:
+                return text
+        return ""
 
-                            // 查找可点击的验证区域
-                            const cfElements = document.querySelectorAll('[id*="cf-"], [class*="cf-"]');
-                            for (const el of cfElements) {
-                                if (el.offsetParent !== null && el.offsetWidth > 0 && el.offsetHeight > 0) {
-                                    el.click();
-                                    return 'clicked_element';
-                                }
-                            }
+    def _normalize_sender(self, raw_sender: Any) -> str:
+        """将不同格式的发件人字段标准化为字符串"""
+        if isinstance(raw_sender, str):
+            return raw_sender.strip()
 
-                            return null;
-                        })()
-                    """,
-                    "returnByValue": True
-                }, session_id=session_id)
+        if isinstance(raw_sender, list):
+            for item in raw_sender:
+                sender = self._normalize_sender(item)
+                if sender:
+                    return sender
+            return ""
 
-                if js_result and "result" in js_result and "result" in js_result["result"]:
-                    click_result = js_result["result"]["result"].get("value")
-                    if click_result:
-                        print(f"   ✓ JavaScript点击成功（{click_result}）")
-                        # 等待验证完成
-                        time.sleep(3)
-                        # 跳到验证检查步骤
-                        node_id = -1  # 标记为已处理
-                    else:
-                        print("   ⚠️  JavaScript未找到可点击元素，可能验证已完成")
-                        time.sleep(3)
-                        return True
-                else:
-                    print("   ⚠️  JavaScript执行失败，可能验证已完成")
-                    time.sleep(3)
-                    return True
+        if isinstance(raw_sender, dict):
+            value = raw_sender.get("value")
+            sender = self._normalize_sender(value)
+            if sender:
+                return sender
 
-            # 3. 获取元素位置（仅当通过DOM找到元素时）
-            if node_id > 0:
-                print("   📍 获取元素位置...")
-                result = cdp.send("DOM.getBoxModel", {"nodeId": node_id}, session_id=session_id)
-                if not result or "result" not in result:
-                    print("   ✗ 无法获取元素位置（元素可能不可见）")
-                    print("   💡 尝试等待页面完全加载...")
-                    time.sleep(3)
-                    return True  # 可能验证已自动完成
+            address = self._pick_text(raw_sender, "address", "email")
+            name = self._pick_text(raw_sender, "name", "display_name", "displayName")
+            if name and address:
+                return f"{name} <{address}>"
+            return address or name
 
-                box_model = result["result"]["model"]
-                content = box_model["content"]
-                x = (content[0] + content[4]) / 2
-                y = (content[1] + content[5]) / 2
-                width = content[4] - content[0]
-                height = content[5] - content[1]
+        return ""
 
-                print(f"   ✓ 元素位置: ({x:.1f}, {y:.1f}), 大小: {width:.1f}x{height:.1f}")
+    def _coerce_message_list(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从列表接口响应中提取邮件列表"""
+        payload = self._extract_response_data(data)
 
-                # 4. 点击验证框
-                print("   🖱️  点击验证框...")
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
 
-                # 鼠标移动
-                cdp.send("Input.dispatchMouseEvent", {
-                    "type": "mouseMoved",
-                    "x": x,
-                    "y": y
-                }, session_id=session_id)
+        if isinstance(payload, dict):
+            for key in ("emails", "messages", "items", "results"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
 
-                # 鼠标按下
-                cdp.send("Input.dispatchMouseEvent", {
-                    "type": "mousePressed",
-                    "x": x,
-                    "y": y,
-                    "button": "left",
-                    "clickCount": 1
-                }, session_id=session_id)
+            if any(
+                key in payload
+                for key in (
+                    "id",
+                    "_id",
+                    "email_id",
+                    "message_id",
+                    "subject",
+                    "from",
+                    "from_address",
+                )
+            ):
+                return [payload]
 
-                # 鼠标释放
-                cdp.send("Input.dispatchMouseEvent", {
-                    "type": "mouseReleased",
-                    "x": x,
-                    "y": y,
-                    "button": "left",
-                    "clickCount": 1
-                }, session_id=session_id)
+        return []
 
-                print("   ✓ 点击完成")
+    def _coerce_message_detail(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """从详情接口响应中提取邮件详情字典"""
+        payload = self._extract_response_data(data)
 
-            # 5. 等待验证完成
-            print(f"   ⏳ 等待验证完成（最多{timeout}秒）...")
-            start_time = time.time()
+        if isinstance(payload, dict):
+            for key in ("email", "message", "item"):
+                nested = payload.get(key)
+                if isinstance(nested, dict):
+                    return nested
+            return payload
 
-            while time.time() - start_time < timeout:
-                # 检查页面是否还有Cloudflare特征
-                if not self._detect_cloudflare(cdp, session_id):
-                    elapsed = time.time() - start_time
-                    print(f"   ✅ 验证完成！（耗时{elapsed:.1f}秒）")
-                    return True
+        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            return payload[0]
 
-                time.sleep(1)
+        return {}
 
-            print(f"   ⚠️  验证超时（{timeout}秒）")
-            return False
+    def _extract_message_id(self, message: Dict[str, Any]) -> str:
+        """提取邮件 ID"""
+        return self._pick_text(message, "id", "_id", "email_id", "message_id")
 
-        except Exception as e:
-            print(f"   ✗ 绕过Cloudflare出错: {e}")
-            return False
-
-    def _click_refresh_button(self, cdp, session_id) -> bool:
-        """点击邮箱页面的刷新按钮
-
-        直接调用页面的 refreshEmails() JavaScript 函数来刷新邮件列表
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-
-        Returns:
-            bool: True表示刷新成功，False表示失败
-        """
-        try:
-            print("   🔄 点击刷新按钮...")
-
-            # 直接调用页面的 refreshEmails() 函数
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        // 检查函数是否存在
-                        if (typeof refreshEmails === 'function') {
-                            refreshEmails();
-                            return true;
-                        }
-                        return false;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                success = result["result"]["result"].get("value")
-                if success:
-                    print("   ✓ 刷新按钮点击成功")
-                    return True
-                else:
-                    print("   ⚠️  refreshEmails() 函数不存在")
-                    return False
-
-            print("   ⚠️  刷新按钮点击失败")
-            return False
-
-        except Exception as e:
-            print(f"   ⚠️  点击刷新按钮出错: {e}")
-            return False
-
-    def _wait_for_email_element(self, cdp, session_id, timeout=30) -> bool:
-        """智能等待邮箱元素出现
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-            timeout: 超时时间（秒），默认30秒
-
-        Returns:
-            bool: True表示找到邮箱元素，False表示超时
-        """
-        print(f"   ⏳ 等待邮箱元素出现（最多{timeout}秒）...")
-
-        import time
-        start_time = time.time()
-        attempt = 0
-
-        while time.time() - start_time < timeout:
-            attempt += 1
-            try:
-                # 检查是否有包含@符号的元素
-                result = cdp.send("Runtime.evaluate", {
-                    "expression": """
-                        (() => {
-                            // 查找所有可能包含邮箱的元素
-                            const selectors = [
-                                'input[type="text"]',
-                                'input[type="email"]',
-                                'input[readonly]',
-                                'div[class*="email"]',
-                                'span[class*="email"]',
-                                'p[class*="email"]',
-                                'code',
-                                'pre'
-                            ];
-
-                            for (const selector of selectors) {
-                                const elements = document.querySelectorAll(selector);
-                                for (const el of elements) {
-                                    const text = el.value || el.textContent || el.innerText;
-                                    if (text && text.includes('@')) {
-                                        return true;
-                                    }
-                                }
-                            }
-
-                            // 检查整个页面文本
-                            const bodyText = document.body.innerText || document.body.textContent;
-                            if (bodyText && bodyText.includes('@')) {
-                                return true;
-                            }
-
-                            return false;
-                        })()
-                    """,
-                    "returnByValue": True
-                }, session_id=session_id)
-
-                if result and "result" in result and "result" in result["result"]:
-                    found = result["result"]["result"].get("value")
-                    if found:
-                        elapsed = time.time() - start_time
-                        print(f"   ✓ 找到邮箱元素（耗时{elapsed:.1f}秒，尝试{attempt}次）")
-                        return True
-
-                # 每次等待1秒
-                if attempt % 5 == 0:
-                    print(f"   ⏳ 继续等待... ({attempt}次尝试，已用{time.time() - start_time:.1f}秒)")
-                time.sleep(1)
-
-            except Exception as e:
-                print(f"   ⚠️  检查出错: {e}")
-                time.sleep(1)
-
-        print(f"   ✗ 等待超时（{timeout}秒）")
-        return False
-
-    def _extract_email(self, cdp, session_id) -> str:
-        """从页面提取邮箱地址
-
-        使用双策略提取邮箱：
-        1. 策略1：查找特定元素中的邮箱
-        2. 策略2：等待后再次尝试
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-
-        Returns:
-            str: 邮箱地址，失败返回None
-        """
-        print("   📧 提取邮箱地址...")
-
-        try:
-            # 策略1: 使用JavaScript查找包含@的文本内容
-            print("   📝 尝试策略1: 查找包含@符号的文本...")
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        // 查找所有可能包含邮箱的元素
-                        const selectors = [
-                            'input[type="text"]',
-                            'input[type="email"]',
-                            'input[readonly]',
-                            'div[class*="email"]',
-                            'span[class*="email"]',
-                            'p[class*="email"]',
-                            'code',
-                            'pre'
-                        ];
-
-                        // 遍历所有选择器
-                        for (const selector of selectors) {
-                            const elements = document.querySelectorAll(selector);
-                            for (const el of elements) {
-                                const text = el.value || el.textContent || el.innerText;
-                                if (text && text.includes('@')) {
-                                    // 使用正则提取邮箱地址
-                                    const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                                    if (emailMatch) {
-                                        return emailMatch[0];
-                                    }
-                                }
-                            }
-                        }
-
-                        // 策略2: 查找整个页面文本中的邮箱
-                        const bodyText = document.body.innerText || document.body.textContent;
-                        const emailMatch = bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                        if (emailMatch) {
-                            return emailMatch[0];
-                        }
-
-                        return null;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                email = result["result"]["result"].get("value")
-                if email:
-                    print(f"   ✓ 成功提取邮箱: {email}")
-                    return email
-
-            print("   ⚠️  策略1未找到邮箱")
-
-            # 策略2: 等待页面动态加载后再次尝试
-            print("   ⏳ 等待页面动态加载...")
-            from bitbrowser_api import human_delay
-            human_delay(2.0)
-
-            print("   📝 尝试策略2: 再次查找邮箱...")
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        const bodyText = document.body.innerText || document.body.textContent;
-                        const emailMatch = bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);
-                        return emailMatch ? emailMatch[0] : null;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                email = result["result"]["result"].get("value")
-                if email:
-                    print(f"   ✓ 成功提取邮箱: {email}")
-                    return email
-
-            print("   ✗ 无法从页面提取邮箱地址")
-            print("   💡 提示: 请检查页面是否正确加载")
+    def _normalize_message(
+        self,
+        primary_message: Optional[Dict[str, Any]],
+        fallback_message: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, str]]:
+        """将邮件数据标准化为统一结构"""
+        sources = [source for source in (primary_message, fallback_message) if isinstance(source, dict)]
+        if not sources:
             return None
 
-        except Exception as e:
-            print(f"   ✗ 提取邮箱出错: {e}")
-            return None
+        subject = ""
+        content = ""
+        html = ""
+        from_addr = ""
 
-    # ==================== 邮箱地址获取 ====================
+        for source in sources:
+            if not subject:
+                subject = self._pick_text(source, "subject", "title")
+
+            if not content:
+                content = self._pick_text(
+                    source,
+                    "content",
+                    "text",
+                    "text_content",
+                    "plain_text",
+                    "plainText",
+                    "body_text",
+                    "bodyText",
+                )
+
+            if not html:
+                html = self._pick_text(
+                    source,
+                    "html_content",
+                    "html",
+                    "html_body",
+                    "htmlBody",
+                    "body_html",
+                    "bodyHtml",
+                )
+
+            if not from_addr:
+                from_addr = self._pick_text(
+                    source,
+                    "from_address",
+                    "fromAddress",
+                    "sender_address",
+                    "senderAddress",
+                )
+                if not from_addr:
+                    from_addr = self._normalize_sender(source.get("from"))
+                if not from_addr:
+                    from_addr = self._normalize_sender(source.get("sender"))
+
+        normalized = {
+            "subject": subject,
+            "content": content,
+            "html": html,
+            "from": from_addr,
+        }
+        if any(normalized.values()):
+            return normalized
+        return None
+
+    def _sleep_for_retry(self, seconds: int) -> None:
+        """轮询等待"""
+        time.sleep(max(1, int(seconds or self.DEFAULT_CHECK_INTERVAL)))
 
     def get_email_from_page(self, cdp, session_id) -> str:
-        """从网页提取邮箱地址
-
-        完整流程：
-        1. 检测Cloudflare验证
-        2. 如果有验证，自动绕过
-        3. 等待邮箱元素出现
-        4. 提取邮箱地址
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-
-        Returns:
-            str: 邮箱地址，失败返回None
-        """
-        print("   🔍 从网页提取邮箱地址...")
-
-        try:
-            # 步骤1: 检测Cloudflare验证
-            print("\n   📋 步骤1: 检测Cloudflare验证")
-            has_cloudflare = self._detect_cloudflare(cdp, session_id)
-
-            # 步骤2: 如果有Cloudflare，尝试绕过
-            if has_cloudflare:
-                print("\n   📋 步骤2: 绕过Cloudflare验证")
-                if not self._bypass_cloudflare(cdp, session_id, timeout=30):
-                    print("   ✗ Cloudflare绕过失败")
-                    return None
-                print("   ✓ Cloudflare绕过成功")
-            else:
-                print("   ✓ 无需Cloudflare验证")
-
-            # 步骤3: 等待邮箱元素出现
-            print("\n   📋 步骤3: 等待邮箱元素出现")
-            if not self._wait_for_email_element(cdp, session_id, timeout=30):
-                print("   ✗ 邮箱元素未出现")
-                return None
-
-            # 步骤4: 提取邮箱地址
-            print("\n   📋 步骤4: 提取邮箱地址")
-            email = self._extract_email(cdp, session_id)
-
-            if email:
-                print(f"\n   ✅ 成功获取邮箱: {email}")
-                return email
-            else:
-                print("\n   ✗ 邮箱提取失败")
-                return None
-
-        except Exception as e:
-            print(f"\n   ✗ 获取邮箱出错: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        """ChatGPT Mail 不再使用网页提取流程"""
+        print("   ⚠️  ChatGPT Mail 已改为纯 API 模式，不支持从网页提取邮箱")
+        print("   💡 请使用 get_email_from_api() 方法")
+        return None
 
     def get_email_from_api(self) -> str:
-        """通过API获取邮箱地址
-
-        Returns:
-            str: 邮箱地址,失败返回None
-        """
-        print("   🔍 通过API生成邮箱...")
+        """通过 API 生成邮箱地址"""
+        print("   🔍 通过 ChatGPT Mail API 生成邮箱...")
 
         try:
-            # 调用API生成邮箱
-            url = f"{self.base_url}/api/generate-email"
-            req = Request(url, method='GET')
-            req.add_header('X-API-Key', self.api_key)
-            req.add_header('User-Agent', 'Mozilla/5.0')
+            payload = {}
+            if self.prefix:
+                payload["prefix"] = self.prefix
+            if self.domain:
+                payload["domain"] = self.domain
 
-            response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode('utf-8'))
+            response = self._request(
+                "/generate-email",
+                method="POST" if payload else "GET",
+                payload=payload or None,
+            )
 
-            # 新API响应格式: {"success": true, "data": {"email": "..."}, "error": ""}
-            if data.get('success'):
-                email = data.get('data', {}).get('email')
-                if email:
-                    print(f"   ✓ 生成邮箱成功: {email}")
-                    return email
-            
-            error_msg = data.get('error', 'API响应中没有email字段')
-            print(f"   ✗ {error_msg}")
-            return None
+            if not response.get("success"):
+                error_msg = self._extract_error_message(response, "生成邮箱失败")
+                print(f"   ✗ {error_msg}")
+                return None
+
+            data = self._extract_response_data(response)
+            email = self._pick_text(data, "email", "address")
+            if not email:
+                email = self._pick_text(response, "email", "address")
+
+            if not email:
+                print("   ✗ API响应中没有 email 字段")
+                return None
+
+            self.current_email = email
+            print(f"   ✓ 生成邮箱成功: {email}")
+            return email
 
         except HTTPError as e:
-            error_body = e.read().decode('utf-8') if e.fp else 'No error body'
-            print(f"   ✗ HTTP错误 {e.code}: {error_body}")
+            error_body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            print(f"   ✗ HTTP错误 {e.code}: {error_body or e.reason}")
+            return None
+        except URLError as e:
+            print(f"   ✗ 网络错误: {e.reason}")
             return None
         except Exception as e:
             print(f"   ✗ 生成邮箱失败: {type(e).__name__}: {e}")
             return None
-    
-    # ==================== 邮件内容获取 ====================
-
-    def _click_refresh_button(self, cdp, session_id) -> bool:
-        """点击刷新按钮获取最新邮件
-
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-
-        Returns:
-            bool: 成功返回True，失败返回False
-        """
-        try:
-            # 调用页面的refreshEmails函数
-            result = cdp.send("Runtime.evaluate", {
-                "expression": """
-                    (() => {
-                        if (typeof refreshEmails === 'function') {
-                            refreshEmails();
-                            return true;
-                        }
-                        return false;
-                    })()
-                """,
-                "returnByValue": True
-            }, session_id=session_id)
-
-            if result and "result" in result and "result" in result["result"]:
-                success = result["result"]["result"].get("value")
-                if success:
-                    return True
-
-            return False
-
-        except Exception as e:
-            print(f"   ⚠️  刷新按钮点击失败: {e}")
-            return False
 
     def get_latest_email_from_page(self, cdp, session_id, email: str) -> dict:
-        """从网页获取最新邮件内容
+        """ChatGPT Mail 不再使用网页提取流程"""
+        print("   ⚠️  ChatGPT Mail 已改为纯 API 模式，不支持从网页获取邮件")
+        print("   💡 请使用 get_latest_email_from_api() 方法")
+        return None
 
-        Args:
-            cdp: CDPClient实例
-            session_id: CDP会话ID
-            email: 邮箱地址
-
-        Returns:
-            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
-                  失败返回None
-        """
-        print(f"   📧 从网页获取最新邮件...")
-
-        try:
-            from bitbrowser_api import human_delay
-
-            # 最多尝试20次，每次等待3秒
-            max_retries = 20
-
-            for attempt in range(max_retries):
-                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
-
-                try:
-                    # 点击刷新按钮
-                    self._click_refresh_button(cdp, session_id)
-
-                    # 等待邮件加载
-                    human_delay(2.0)
-
-                    # 使用JavaScript查找邮件
-                    result = cdp.send("Runtime.evaluate", {
-                        "expression": """
-                            (() => {
-                                // 查找所有可能包含邮件的元素
-                                const emailElements = document.querySelectorAll(
-                                    'div[class*="email"], div[class*="message"], ' +
-                                    'div[class*="mail"], li[class*="email"], ' +
-                                    'tr[class*="email"], .email-item, .message-item'
-                                );
-
-                                // 遍历所有邮件元素，查找Augment或Windsurf邮件
-                                for (const el of emailElements) {
-                                    const text = el.textContent || el.innerText || '';
-                                    const html = el.innerHTML || '';
-
-                                    // 检查是否来自Augment或Windsurf
-                                    if (text.includes('augmentcode.com') ||
-                                        text.includes('support@augment') ||
-                                        text.includes('Augment') ||
-                                        text.includes('windsurf') ||
-                                        text.includes('Windsurf') ||
-                                        text.includes('exafunction')) {
-
-                                        // 提取发件人
-                                        let from = '';
-                                        const fromMatch = text.match(/From[:\\s]+([^\\n]+)/i) ||
-                                                        text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
-                                        if (fromMatch) {
-                                            from = fromMatch[1].trim();
-                                        }
-
-                                        // 提取主题
-                                        let subject = '';
-                                        const subjectMatch = text.match(/Subject[:\\s]+([^\\n]+)/i);
-                                        if (subjectMatch) {
-                                            subject = subjectMatch[1].trim();
-                                        } else if (text.includes('Augment')) {
-                                            subject = 'Augment Verification';
-                                        } else if (text.includes('Windsurf') || text.includes('windsurf')) {
-                                            subject = 'Windsurf Verification';
-                                        }
-
-                                        return {
-                                            subject: subject,
-                                            content: text,
-                                            html: html,
-                                            from: from
-                                        };
-                                    }
-                                }
-
-                                return null;
-                            })()
-                        """,
-                        "returnByValue": True
-                    }, session_id=session_id)
-
-                    if result and "result" in result and "result" in result["result"]:
-                        email_data = result["result"]["result"].get("value")
-                        if email_data:
-                            print(f"   ✓ 找到邮件: {email_data.get('subject', 'No Subject')}")
-                            return email_data
-
-                    print(f"   ⏳ 暂未找到邮件，等待3秒后重试...")
-                    human_delay(3.0)
-
-                except Exception as e:
-                    print(f"   ⚠️  检查出错: {e}")
-                    human_delay(3.0)
-
-            print(f"   ✗ 获取邮件超时（已尝试{max_retries}次）")
+    def get_latest_email_from_api(
+        self,
+        email_address: str,
+        timeout: int = 120,
+        check_interval: int = 3,
+    ) -> dict:
+        """通过 API 轮询获取最新邮件内容"""
+        email_address = (email_address or self.current_email).strip()
+        if not email_address:
+            print("   ✗ 邮箱地址为空，请先调用 get_email_from_api() 或传入有效邮箱")
             return None
 
-        except Exception as e:
-            print(f"   ✗ 获取邮件出错: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        timeout = max(1, int(timeout or self.DEFAULT_POLL_TIMEOUT))
+        check_interval = max(1, int(check_interval or self.DEFAULT_CHECK_INTERVAL))
+        deadline = time.time() + timeout
+        attempt = 0
 
-    def get_latest_email_from_api(self, email_address: str) -> dict:
-        """通过API获取最新邮件内容
-
-        Args:
-            email_address: 邮箱地址
-
-        Returns:
-            dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
-                  失败返回None
-        """
-        print(f"\n📧 正在从ChatGPT API获取最新邮件...")
+        print("\n📧 正在从 ChatGPT Mail API 获取最新邮件...")
         print(f"   📮 邮箱地址: {email_address}")
+        print(f"   ⏳ 超时时间: {timeout}秒, 检查间隔: {check_interval}秒")
 
-        # URL编码邮箱地址
-        encoded_email = quote(email_address)
-        api_url = f"{self.api_url}?email={encoded_email}"
-
-        print(f"   🔗 API地址: {api_url}")
-
-        # 最多尝试10次,每次间隔3秒
-        max_retries = 10
-        for attempt in range(max_retries):
+        while time.time() < deadline:
+            attempt += 1
             try:
-                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
+                print(f"   🔄 第 {attempt} 次尝试...")
+                list_response = self._request("/emails", query={"email": email_address})
 
-                # 发送HTTP请求
-                req = Request(api_url)
-                req.add_header('X-API-Key', self.api_key)         
-                req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-
-                response = urlopen(req, timeout=10)
-                data = json.loads(response.read().decode('utf-8'))
-
-                # 新API响应格式: {"success": true, "data": {"emails": [...], "count": n}, "error": ""}
-                if not data.get('success'):
-                    error_msg = data.get('error', '请求失败')
-                    print(f"   ⚠️ API错误: {error_msg}")
-                    from bitbrowser_api import human_delay
-                    human_delay(3.0)
+                if not list_response.get("success"):
+                    error_msg = self._extract_error_message(list_response, "获取邮件列表失败")
+                    print(f"   ⚠️  API错误: {error_msg}")
+                    self._sleep_for_retry(check_interval)
                     continue
-                
-                emails_data = data.get('data', {})
-                emails = emails_data.get('emails', [])
-                
-                if not emails:
-                    print(f"   ⏳ 暂无邮件,等待3秒后重试...")
-                    from bitbrowser_api import human_delay
-                    human_delay(3.0)
+
+                messages = self._coerce_message_list(list_response)
+                print(f"   ✓ 当前邮箱共有 {len(messages)} 封邮件")
+
+                if not messages:
+                    print(f"   ⏳ 暂无邮件，{check_interval}秒后重试...")
+                    self._sleep_for_retry(check_interval)
                     continue
-                print(f"   ✓ 找到 {len(emails)} 封邮件")
 
-                # 获取最新邮件（第一封）
-                latest_email = emails[0]
-                from_addr = latest_email.get('from_address', '')
-                subject = latest_email.get('subject', '')
-                content = latest_email.get('content', '')
+                latest_message = messages[0]
+                message_id = self._extract_message_id(latest_message)
+                detail_message = None
 
-                print(f"   📧 最新邮件: {from_addr} - {subject}")
+                if message_id:
+                    try:
+                        detail_response = self._request(f"/email/{quote(message_id, safe='')}")
+                        if detail_response.get("success"):
+                            detail_message = self._coerce_message_detail(detail_response)
+                        else:
+                            error_msg = self._extract_error_message(detail_response, "获取邮件详情失败")
+                            print(f"   ⚠️  {error_msg}，将使用列表数据兜底")
+                    except Exception as detail_error:
+                        print(f"   ⚠️  获取邮件详情失败: {detail_error}，将使用列表数据兜底")
+                else:
+                    print("   ⚠️  邮件列表中缺少邮件ID，将直接使用列表数据")
 
-                # 新API提供html_content字段
-                html_content = latest_email.get('html_content', '')
-                
-                return {
-                    'subject': subject,
-                    'content': content,
-                    'html': html_content,
-                    'from': from_addr
-                }
+                normalized = self._normalize_message(detail_message, fallback_message=latest_message)
+                if not normalized:
+                    print(f"   ⚠️  邮件存在但无法解析，{check_interval}秒后重试...")
+                    self._sleep_for_retry(check_interval)
+                    continue
+
+                print(
+                    "   ✓ 收到邮件: "
+                    f"{normalized.get('from') or '(未知发件人)'} - "
+                    f"{normalized.get('subject') or '(无主题)'}"
+                )
+                return normalized
 
             except HTTPError as e:
-                print(f"   ✗ HTTP错误: {e.code} {e.reason}")
-                if attempt < max_retries - 1:
-                    from bitbrowser_api import human_delay
-                    human_delay(3.0)
+                error_body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+                print(f"   ✗ HTTP错误 {e.code}: {error_body or e.reason}")
             except URLError as e:
                 print(f"   ✗ 网络错误: {e.reason}")
-                if attempt < max_retries - 1:
-                    from bitbrowser_api import human_delay
-                    human_delay(3.0)
             except Exception as e:
-                print(f"   ✗ 错误: {e}")
-                if attempt < max_retries - 1:
-                    from bitbrowser_api import human_delay
-                    human_delay(3.0)
+                print(f"   ✗ 获取邮件出错: {type(e).__name__}: {e}")
 
-        print(f"   ✗ 获取邮件失败（已尝试{max_retries}次）")
+            if time.time() < deadline:
+                self._sleep_for_retry(check_interval)
+
+        print(f"   ✗ 获取邮件失败（已超时 {timeout} 秒）")
         return None
 
     # ==================== 验证码解析 ====================
     # 使用基类的实现，无需重写
-
-
-
-
-
