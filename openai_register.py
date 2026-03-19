@@ -7,9 +7,10 @@ import hashlib
 import base64
 import argparse
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import urllib.parse
 
 from curl_cffi import requests
@@ -195,6 +196,13 @@ CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 DEFAULT_REDIRECT_URI = f"http://localhost:1455/auth/callback"
 DEFAULT_SCOPE = "openid email profile offline_access"
+DEFAULT_MGMT_URL = "http://127.0.0.1:8045"
+DEFAULT_PRECHECK_TARGET_TYPE = "codex"
+DEFAULT_PRECHECK_UA = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
+DEFAULT_PRECHECK_TIMEOUT = 12
+DEFAULT_PRECHECK_WORKERS = 120
+DEFAULT_PRECHECK_RETRIES = 1
+DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 
 
 def _b64url_no_pad(raw: bytes) -> str:
@@ -286,6 +294,269 @@ def _to_int(v: Any) -> int:
         return int(v)
     except (TypeError, ValueError):
         return 0
+
+
+def safe_json(resp: Any) -> Dict[str, Any]:
+    try:
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def safe_json_text(text: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(text)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def mgmt_headers(token: str) -> Dict[str, str]:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+
+def get_item_type(item: Dict[str, Any]) -> str:
+    return str(item.get("type") or item.get("typo") or "").strip()
+
+
+def fetch_auth_files(base_url: str, token: str, timeout: int) -> List[Dict[str, Any]]:
+    resp = requests.get(
+        f"{base_url.rstrip('/')}/v0/management/auth-files",
+        headers=mgmt_headers(token),
+        timeout=timeout,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"获取 auth-files 失败: HTTP {resp.status_code} {resp.text[:200]}")
+    data = safe_json(resp)
+    files = data.get("files")
+    return files if isinstance(files, list) else []
+
+
+def delete_auth_file(base_url: str, token: str, name: str, timeout: int) -> None:
+    resp = requests.delete(
+        f"{base_url.rstrip('/')}/v0/management/auth-files",
+        params={"name": name},
+        headers=mgmt_headers(token),
+        timeout=timeout,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"DELETE {name} 失败: HTTP {resp.status_code} {resp.text[:200]}")
+
+
+def build_probe_payload(
+    auth_index: str, user_agent: str, chatgpt_account_id: str = ""
+) -> Dict[str, Any]:
+    headers = {
+        "Authorization": "Bearer $TOKEN$",
+        "Content-Type": "application/json",
+        "User-Agent": user_agent,
+    }
+    if chatgpt_account_id:
+        headers["Chatgpt-Account-Id"] = chatgpt_account_id
+    return {
+        "authIndex": auth_index,
+        "method": "GET",
+        "url": "https://chatgpt.com/backend-api/wham/usage",
+        "header": headers,
+    }
+
+
+def probe_auth_file_401(
+    base_url: str,
+    token: str,
+    item: Dict[str, Any],
+    user_agent: str,
+    chatgpt_account_id: str,
+    timeout: int,
+    retries: int,
+) -> Dict[str, Any]:
+    auth_index = item.get("auth_index")
+    result: Dict[str, Any] = {
+        "name": item.get("name") or item.get("id"),
+        "account": item.get("account") or item.get("email"),
+        "auth_index": auth_index,
+        "type": get_item_type(item),
+        "provider": item.get("provider"),
+        "status_code": None,
+        "invalid_401": False,
+        "error": None,
+    }
+
+    if not auth_index:
+        result["error"] = "missing auth_index"
+        return result
+
+    payload = build_probe_payload(str(auth_index), user_agent, chatgpt_account_id)
+    max_retries = max(0, int(retries or 0))
+
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                f"{base_url.rstrip('/')}/v0/management/api-call",
+                headers={**mgmt_headers(token), "Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            if resp.status_code >= 400:
+                raise RuntimeError(f"http {resp.status_code}: {resp.text[:200]}")
+
+            data = safe_json(resp)
+            if not data:
+                data = safe_json_text(resp.text)
+
+            status_code = data.get("status_code")
+            result["status_code"] = status_code
+            result["invalid_401"] = status_code == 401
+            result["error"] = None
+            return result
+        except Exception as e:
+            result["error"] = str(e)
+            if attempt >= max_retries:
+                return result
+
+    return result
+
+
+def run_preclean_probe_all(
+    base_url: str,
+    token: str,
+    target_type: str,
+    provider: Optional[str],
+    workers: int,
+    timeout: int,
+    retries: int,
+    user_agent: str,
+    chatgpt_account_id: str,
+) -> List[Dict[str, Any]]:
+    files = fetch_auth_files(base_url, token, timeout)
+    candidates: List[Dict[str, Any]] = []
+    target_type_lower = str(target_type or "").lower()
+    provider_lower = str(provider or "").lower()
+
+    for item in files:
+        item_type = get_item_type(item).lower()
+        item_provider = str(item.get("provider") or "").lower()
+        if target_type_lower and item_type != target_type_lower:
+            continue
+        if provider_lower and item_provider != provider_lower:
+            continue
+        candidates.append(item)
+
+    print(f"[*] 管理端账号总数: {len(files)}")
+    print(f"[*] 待检查401账号数: {len(candidates)}")
+
+    if not candidates:
+        return []
+
+    max_workers = max(1, min(int(workers or 1), len(candidates)))
+    results: List[Dict[str, Any]] = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                probe_auth_file_401,
+                base_url,
+                token,
+                item,
+                user_agent,
+                chatgpt_account_id,
+                timeout,
+                retries,
+            )
+            for item in candidates
+        ]
+        total = len(futures)
+        for done, future in enumerate(as_completed(futures), start=1):
+            results.append(future.result())
+            if done % 100 == 0 or done == total:
+                print(f"[*] 401检测进度: {done}/{total}")
+
+    return results
+
+
+def action_auto_check_401_and_delete(
+    base_url: str,
+    token: str,
+    timeout: int,
+    results: List[Dict[str, Any]],
+    output_401: str,
+) -> Dict[str, int]:
+    invalid_401 = [r for r in results if r.get("invalid_401")]
+    invalid_401.sort(key=lambda x: x.get("name") or "")
+
+    if output_401:
+        output_dir = os.path.dirname(output_401)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        with open(output_401, "w", encoding="utf-8") as f:
+            json.dump(invalid_401, f, ensure_ascii=False, indent=2)
+        print(f"[*] 已导出401账号列表: {output_401}")
+
+    print(f"[*] 检测到401账号: {len(invalid_401)}")
+    if not invalid_401:
+        print("[*] 无需删除401账号。")
+        return {"detected": 0, "deleted": 0, "failed": 0}
+
+    ok = 0
+    fail = 0
+    for item in invalid_401:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            fail += 1
+            continue
+        try:
+            delete_auth_file(base_url, token, name, timeout)
+            ok += 1
+            print(f"[*] 已删除401账号: {name}")
+        except Exception as e:
+            fail += 1
+            print(f"[FAIL] 删除401账号 {name}: {e}")
+
+    print(f"[*] 401账号删除完成: 成功 {ok}，失败 {fail}")
+    return {"detected": len(invalid_401), "deleted": ok, "failed": fail}
+
+
+def preclean_401_and_delete(
+    base_url: str,
+    token: str,
+    *,
+    target_type: str = DEFAULT_PRECHECK_TARGET_TYPE,
+    provider: Optional[str] = None,
+    workers: int = DEFAULT_PRECHECK_WORKERS,
+    timeout: int = DEFAULT_PRECHECK_TIMEOUT,
+    retries: int = DEFAULT_PRECHECK_RETRIES,
+    user_agent: str = DEFAULT_PRECHECK_UA,
+    chatgpt_account_id: str = "",
+    output_401: str = DEFAULT_PRECHECK_OUTPUT_401,
+) -> Dict[str, int]:
+    if not base_url or not token:
+        print("[*] 跳过注册前401清理：未配置 CLIProxyAPI 管理接口或 Token")
+        return {"detected": 0, "deleted": 0, "failed": 0}
+
+    print("[*] 注册前开始检查并自动删除 401 账号...")
+    try:
+        results = run_preclean_probe_all(
+            base_url=base_url,
+            token=token,
+            target_type=target_type,
+            provider=provider,
+            workers=workers,
+            timeout=timeout,
+            retries=retries,
+            user_agent=user_agent,
+            chatgpt_account_id=chatgpt_account_id,
+        )
+        return action_auto_check_401_and_delete(
+            base_url=base_url,
+            token=token,
+            timeout=timeout,
+            results=results,
+            output_401=output_401,
+        )
+    except Exception as e:
+        print(f"[Warning] 注册前401清理失败: {e}")
+        return {"detected": 0, "deleted": 0, "failed": 0}
 
 
 def _post_form(
@@ -640,10 +911,58 @@ def main() -> None:
         "--sleep-max", type=int, default=30, help="循环模式最长等待秒数"
     )
     parser.add_argument(
-        "--mgmt-url", default="http://127.0.0.1:8045", help="CLIProxyAPI 管理接口地址"
+        "--mgmt-url", default=DEFAULT_MGMT_URL, help="CLIProxyAPI 管理接口地址"
     )
     parser.add_argument(
         "--mgmt-token", default=os.getenv("MGMT_TOKEN", ""), help="CLIProxyAPI 管理 Token"
+    )
+    parser.add_argument(
+        "--skip-preclean-401",
+        action="store_true",
+        help="跳过注册前自动检查并删除401账号",
+    )
+    parser.add_argument(
+        "--preclean-target-type",
+        default=DEFAULT_PRECHECK_TARGET_TYPE,
+        help="注册前401检查时过滤的账号类型",
+    )
+    parser.add_argument(
+        "--preclean-provider",
+        default=None,
+        help="注册前401检查时过滤的 provider",
+    )
+    parser.add_argument(
+        "--preclean-workers",
+        type=int,
+        default=DEFAULT_PRECHECK_WORKERS,
+        help="注册前401检查并发数",
+    )
+    parser.add_argument(
+        "--preclean-timeout",
+        type=int,
+        default=DEFAULT_PRECHECK_TIMEOUT,
+        help="注册前401检查超时秒数",
+    )
+    parser.add_argument(
+        "--preclean-retries",
+        type=int,
+        default=DEFAULT_PRECHECK_RETRIES,
+        help="注册前401检查重试次数",
+    )
+    parser.add_argument(
+        "--preclean-user-agent",
+        default=DEFAULT_PRECHECK_UA,
+        help="注册前401检查使用的 User-Agent",
+    )
+    parser.add_argument(
+        "--preclean-chatgpt-account-id",
+        default=os.getenv("CHATGPT_ACCOUNT_ID", ""),
+        help="注册前401检查使用的 Chatgpt-Account-Id",
+    )
+    parser.add_argument(
+        "--preclean-output-401",
+        default=DEFAULT_PRECHECK_OUTPUT_401,
+        help="注册前401账号导出文件路径",
     )
     args = parser.parse_args()
 
@@ -653,10 +972,14 @@ def main() -> None:
             with open(config_path, "r", encoding="utf-8") as f:
                 conf = json.load(f)
             if isinstance(conf, dict):
-                if conf.get("base_url") and args.mgmt_url == "http://127.0.0.1:8045":
+                if conf.get("base_url") and args.mgmt_url == DEFAULT_MGMT_URL:
                     args.mgmt_url = conf["base_url"]
                 if conf.get("cpa_password") and not args.mgmt_token:
                     args.mgmt_token = conf["cpa_password"]
+                if conf.get("user_agent") and args.preclean_user_agent == DEFAULT_PRECHECK_UA:
+                    args.preclean_user_agent = conf["user_agent"]
+                if conf.get("chatgpt_account_id") and not args.preclean_chatgpt_account_id:
+                    args.preclean_chatgpt_account_id = conf["chatgpt_account_id"]
         except Exception as e:
             print(f"[Warning] 自动读取统一配置文件失败: {e}")
 
@@ -665,6 +988,20 @@ def main() -> None:
 
     count = 0
     print("[Info] Yasal's Seamless OpenAI Auto-Registrar Started for ZJH")
+
+    if not args.skip_preclean_401:
+        preclean_401_and_delete(
+            base_url=args.mgmt_url,
+            token=args.mgmt_token,
+            target_type=args.preclean_target_type,
+            provider=args.preclean_provider,
+            workers=args.preclean_workers,
+            timeout=args.preclean_timeout,
+            retries=args.preclean_retries,
+            user_agent=args.preclean_user_agent,
+            chatgpt_account_id=args.preclean_chatgpt_account_id,
+            output_401=args.preclean_output_401,
+        )
 
     while True:
         count += 1
