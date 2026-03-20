@@ -10,11 +10,17 @@ ChatTempMail临时邮箱服务提供者
 """
 
 import json
+import os
 import time
+from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlencode
 from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError
 
 from .email_provider import EmailProvider
+
+# 未传 api_key 且未设置环境变量 CHAT_TEMPMAIL_API_KEY 时使用
+_DEFAULT_CHAT_TEMPMAIL_API_KEY = "mk_HvAkvMNu1qce02lzhwC3ZZbW-NOoRYMp"
 
 
 class ChatTempMailProvider(EmailProvider):
@@ -24,15 +30,19 @@ class ChatTempMailProvider(EmailProvider):
     使用官方API接口进行邮箱管理和邮件获取
     """
     
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, **kwargs: Any):
         """初始化ChatTempMail服务
-        
+
         Args:
-            api_key: API密钥,如果不提供则需要从环境变量或配置文件读取
+            api_key: API密钥；省略时依次尝试环境变量 CHAT_TEMPMAIL_API_KEY、内置默认密钥
+            **kwargs: 与工厂兼容（如 proxies、timeout），本实现使用 urllib 直连，忽略之
         """
         self.base_url = "https://chat-tempmail.com"
         self.api_base = "https://chat-tempmail.com/api"
-        self.api_key = api_key
+        key = (api_key if api_key is not None else os.environ.get("CHAT_TEMPMAIL_API_KEY", "")).strip()
+        if not key:
+            key = _DEFAULT_CHAT_TEMPMAIL_API_KEY.strip()
+        self.api_key = key or None
         self.domain_patterns = ["chat-tempmail.com"]
 
         # 缓存邮箱ID映射 {email_address: email_id}
@@ -69,16 +79,26 @@ class ChatTempMailProvider(EmailProvider):
         """
         print("   🔍 通过API创建邮箱...")
 
-        try:
-            # 调用API创建邮箱
-            email = self._create_email()
+        if not self.api_key:
+            print("   ✗ 错误: 未设置API密钥")
+            return None
 
+        try:
+            email = self._create_email()
             if email:
                 print(f"   ✓ 创建邮箱成功: {email}")
                 return email
-            else:
-                print("   ✗ 创建邮箱失败")
-                return None
+
+            print("   ⚠️  创建失败，尝试清理旧邮箱后重试...")
+            cleaned = self._cleanup_old_emails()
+            if cleaned > 0:
+                email = self._create_email()
+                if email:
+                    print(f"   ✓ 清理后创建邮箱成功: {email}")
+                    return email
+
+            print("   ✗ 创建邮箱失败")
+            return None
 
         except Exception as e:
             print(f"   ✗ 创建邮箱出错: {e}")
@@ -95,11 +115,22 @@ class ChatTempMailProvider(EmailProvider):
         print("   💡 请使用get_latest_email_from_api()方法")
         return None
 
-    def get_latest_email_from_api(self, email_address: str) -> dict:
+    def get_latest_email_from_api(
+        self,
+        email_address: str,
+        timeout: int = 120,
+        check_interval: int = 3,
+        filter_func: Optional[Callable[[Dict[str, str]], bool]] = None,
+        **kwargs: Any,
+    ) -> dict:
         """通过API获取最新邮件内容
 
         Args:
             email_address: 邮箱地址
+            timeout: 最长等待时间（秒），与 openai_register / TempMail.lol 一致
+            check_interval: 轮询间隔（秒）
+            filter_func: 若提供，仅当对构造出的邮件 dict 返回 True 时才视为命中
+            **kwargs: 忽略未知关键字，兼容其它 provider 的调用方式
 
         Returns:
             dict: 邮件内容字典 {'subject': str, 'content': str, 'html': str, 'from': str}
@@ -120,65 +151,77 @@ class ChatTempMailProvider(EmailProvider):
 
         print(f"   ✓ 邮箱ID: {email_id}")
 
-        # 2. 轮询获取邮件
-        max_retries = 10
-        for attempt in range(max_retries):
-            try:
-                print(f"   🔄 第 {attempt + 1}/{max_retries} 次尝试...")
+        start = time.time()
+        deadline = start + max(1, int(timeout or 1))
+        interval = max(1, int(check_interval or 3))
+        attempt = 0
 
-                # 获取邮件列表
+        while time.time() < deadline:
+            attempt += 1
+            try:
+                print(f"   🔄 第 {attempt} 次尝试（约 {int(deadline - time.time())} 秒内结束）...")
+
                 messages = self._get_messages(email_id)
 
                 if not messages:
-                    print(f"   ⏳ 暂无邮件,等待3秒后重试...")
-                    time.sleep(3)
+                    print(f"   ⏳ 暂无邮件,等待{interval}秒后重试...")
+                    time.sleep(interval)
                     continue
 
                 print(f"   ✓ 找到 {len(messages)} 封邮件")
 
-                # 获取最新邮件（第一封）
-                latest_msg = messages[0]
+                latest_msg = max(
+                    messages,
+                    key=lambda m: m.get('received_at') or 0,
+                )
                 from_addr = latest_msg.get('from_address', '')
                 subject = latest_msg.get('subject', '')
                 msg_id = latest_msg.get('id', '')
 
                 print(f"   📧 最新邮件: {from_addr} - {subject}")
 
-                # 获取邮件详情
                 message_detail = self._get_message_detail(email_id, msg_id)
                 if message_detail:
-                    return {
+                    email_content = {
                         'subject': subject,
                         'content': message_detail.get('content', ''),
                         'html': message_detail.get('html', ''),
-                        'from': from_addr
+                        'from': from_addr,
                     }
+                    if filter_func and not filter_func(email_content):
+                        print("   ⏳ 邮件未通过 filter，继续等待...")
+                        time.sleep(interval)
+                        continue
+                    return email_content
 
-                print(f"   ⚠️  无法获取邮件详情,等待3秒后重试...")
-                time.sleep(3)
+                print(f"   ⚠️  无法获取邮件详情,{interval}秒后重试...")
+                time.sleep(interval)
 
             except Exception as e:
                 print(f"   ✗ 错误: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(3)
+                time.sleep(interval)
 
-        print(f"   ✗ 获取邮件失败（已尝试{max_retries}次）")
+        print(f"   ✗ 获取邮件超时（{timeout} 秒）")
         return None
 
     # ==================== 验证码解析 ====================
     # 使用基类的实现，无需重写
     
-    def _create_email(self, name: str = None, expiry_time: int = 0, domain: str = None) -> str:
+    def _create_email(self, name: str = None, expiry_time: int = 86400000, domain: str = None) -> str:
         """通过API创建新邮箱
 
         Args:
             name: 邮箱前缀,不指定则随机生成
-            expiry_time: 有效期(毫秒) - 3600000(1小时)/86400000(1天)/259200000(3天)/0(永久)
+            expiry_time: 有效期(毫秒) - 3600000(1小时)/86400000(1天,默认)/259200000(3天)/0(永久)
             domain: 邮箱域名,不指定则使用默认域名
 
         Returns:
             str: 创建的邮箱地址,失败返回None
         """
+        if not self.api_key:
+            print("   ✗ 错误: 未设置API密钥")
+            return None
+
         try:
             import random
             import string
@@ -277,28 +320,39 @@ class ChatTempMailProvider(EmailProvider):
         # 检查缓存
         if email_address in self.email_id_cache:
             return self.email_id_cache[email_address]
-        
+
+        if not self.api_key:
+            print("   ✗ 错误: 未设置API密钥")
+            return None
+
         try:
-            # 调用API获取邮箱列表
-            url = f"{self.api_base}/emails"
-            req = Request(url)
-            req.add_header('X-API-Key', self.api_key)
-            req.add_header('User-Agent', 'Mozilla/5.0')
-            
-            response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode('utf-8'))
-            
-            emails = data.get('emails', [])
-            for email_obj in emails:
-                if email_obj.get('address') == email_address:
-                    email_id = email_obj.get('id')
-                    # 缓存结果
-                    self.email_id_cache[email_address] = email_id
-                    return email_id
-            
+            cursor = None
+            max_pages = 200
+            for _ in range(max_pages):
+                path = "/emails"
+                if cursor:
+                    path = f"{path}?{urlencode({'cursor': cursor})}"
+                url = f"{self.api_base}{path}"
+                req = Request(url)
+                req.add_header('X-API-Key', self.api_key)
+                req.add_header('User-Agent', 'Mozilla/5.0')
+
+                response = urlopen(req, timeout=10)
+                data = json.loads(response.read().decode('utf-8'))
+
+                for email_obj in data.get('emails', []):
+                    if email_obj.get('address') == email_address:
+                        email_id = email_obj.get('id')
+                        self.email_id_cache[email_address] = email_id
+                        return email_id
+
+                cursor = data.get('nextCursor')
+                if not cursor:
+                    break
+
             print(f"   ⚠️  在账户中未找到邮箱: {email_address}")
             return None
-            
+
         except Exception as e:
             print(f"   ✗ 获取邮箱ID失败: {e}")
             return None
@@ -313,15 +367,30 @@ class ChatTempMailProvider(EmailProvider):
             list: 邮件列表,失败返回空列表
         """
         try:
-            url = f"{self.api_base}/emails/{email_id}"
-            req = Request(url)
-            req.add_header('X-API-Key', self.api_key)
-            req.add_header('User-Agent', 'Mozilla/5.0')
+            all_messages = []
+            cursor = None
+            max_pages = 50
+            for _ in range(max_pages):
+                path = f"/emails/{email_id}"
+                if cursor:
+                    path = f"{path}?{urlencode({'cursor': cursor})}"
+                url = f"{self.api_base}{path}"
+                req = Request(url)
+                req.add_header('X-API-Key', self.api_key)
+                req.add_header('User-Agent', 'Mozilla/5.0')
 
-            response = urlopen(req, timeout=10)
-            data = json.loads(response.read().decode('utf-8'))
+                response = urlopen(req, timeout=10)
+                data = json.loads(response.read().decode('utf-8'))
 
-            return data.get('messages', [])
+                batch = data.get('messages', [])
+                all_messages.extend(batch)
+
+                cursor = data.get('nextCursor')
+                if not cursor:
+                    break
+
+            all_messages.sort(key=lambda m: m.get('received_at') or 0, reverse=True)
+            return all_messages
 
         except Exception as e:
             print(f"   ✗ 获取邮件列表失败: {e}")
@@ -352,5 +421,67 @@ class ChatTempMailProvider(EmailProvider):
             print(f"   ✗ 获取邮件详情失败: {e}")
             return None
 
+    def _delete_email(self, email_id: str) -> bool:
+        """删除指定邮箱"""
+        try:
+            url = f"{self.api_base}/emails/{email_id}"
+            req = Request(url, method='DELETE')
+            req.add_header('X-API-Key', self.api_key)
+            req.add_header('User-Agent', 'Mozilla/5.0')
 
+            response = urlopen(req, timeout=10)
+            data = json.loads(response.read().decode('utf-8'))
+            return data.get('success', False)
+        except Exception as e:
+            print(f"   ⚠️  删除邮箱 {email_id} 失败: {e}")
+            return False
 
+    def _cleanup_old_emails(self, keep: int = 0) -> int:
+        """清理账户下已有邮箱，为新邮箱腾出配额
+
+        Args:
+            keep: 保留最新的 N 个邮箱，0 表示全部清理
+
+        Returns:
+            int: 成功删除的数量
+        """
+        try:
+            all_emails = []
+            cursor = None
+            for _ in range(200):
+                path = "/emails"
+                if cursor:
+                    path = f"{path}?{urlencode({'cursor': cursor})}"
+                url = f"{self.api_base}{path}"
+                req = Request(url)
+                req.add_header('X-API-Key', self.api_key)
+                req.add_header('User-Agent', 'Mozilla/5.0')
+
+                response = urlopen(req, timeout=10)
+                data = json.loads(response.read().decode('utf-8'))
+                all_emails.extend(data.get('emails', []))
+                cursor = data.get('nextCursor')
+                if not cursor:
+                    break
+
+            if not all_emails:
+                return 0
+
+            all_emails.sort(key=lambda e: e.get('createdAt', ''), reverse=True)
+            to_delete = all_emails[keep:]
+
+            deleted = 0
+            for email_obj in to_delete:
+                eid = email_obj.get('id')
+                addr = email_obj.get('address', '?')
+                if eid and self._delete_email(eid):
+                    self.email_id_cache.pop(addr, None)
+                    deleted += 1
+                    print(f"   🗑️  已删除旧邮箱: {addr}")
+
+            print(f"   ✓ 清理完成，共删除 {deleted} 个邮箱")
+            return deleted
+
+        except Exception as e:
+            print(f"   ✗ 清理旧邮箱失败: {e}")
+            return 0
