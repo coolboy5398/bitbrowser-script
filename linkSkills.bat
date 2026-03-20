@@ -78,21 +78,48 @@ echo %~1
 exit /b 0
 
 :link_one
-if exist "%~2" (
-    echo [SKIP] Already exists: %~2
+set "TARGET_PATH=%~2"
+set "TARGET_DIR=%~dp2"
+set "TARGET_NAME=%~nx2"
+set "ENTRY_EXISTS="
+set "ENTRY_IS_LINK="
+
+dir /a /b "%TARGET_DIR%" 2>nul | findstr /i /x /c:"%TARGET_NAME%" >nul && set "ENTRY_EXISTS=1"
+dir /a:l /b "%TARGET_DIR%" 2>nul | findstr /i /x /c:"%TARGET_NAME%" >nul && set "ENTRY_IS_LINK=1"
+
+if defined ENTRY_EXISTS (
+    pushd "%TARGET_PATH%" >nul 2>nul && (
+        popd
+        if defined ENTRY_IS_LINK (
+            echo [SKIP] Junction already exists: %TARGET_PATH%
+        ) else (
+            echo [SKIP] Directory already exists: %TARGET_PATH%
+        )
+        set /a SKIP_COUNT+=1
+        exit /b 0
+    )
+
+    if defined ENTRY_IS_LINK (
+        echo [SKIP] Broken or inaccessible junction already exists: %TARGET_PATH%
+        echo        -> %~1
+    ) else (
+        echo [SKIP] Existing item is inaccessible or not a directory: %TARGET_PATH%
+        echo        -> %~1
+    )
     set /a SKIP_COUNT+=1
     exit /b 0
 )
 
-mklink /J "%~2" "%~1" >nul
+mklink /J "%TARGET_PATH%" "%~1" >nul 2>nul
 if errorlevel 1 (
-    echo [FAIL] %~2
+    echo [FAIL] Failed to create junction: %TARGET_PATH%
     echo        -> %~1
+    echo        Check permissions or whether another item already occupies the path.
     set /a FAIL_COUNT+=1
     exit /b 1
 )
 
-echo [OK] %~2
+echo [OK] %TARGET_PATH%
 echo      -> %~1
 set /a OK_COUNT+=1
 exit /b 0
