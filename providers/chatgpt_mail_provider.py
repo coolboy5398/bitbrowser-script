@@ -34,7 +34,8 @@ class ChatGPTMailProvider(EmailProvider):
 
     def __init__(
         self,
-        api_key: str = "sk-57pxXsUy7hhJ",
+        api_key: str = "gpt-test",
+        # api_key: str = "sk-57pxXsUy7hhJ",
         proxies: Any = None,
         timeout: int = 15,
         prefix: str = None,
