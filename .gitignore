@@ -9,3 +9,4 @@ tokens/
 invalid_codex_accounts.json
 clean_codex/usage_sorted_accounts.json
 config/accounts.json
+config.json
