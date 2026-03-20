@@ -12,6 +12,7 @@
 from .email_provider import EmailProvider
 from .chatgpt_mail_provider import ChatGPTMailProvider
 from .chat_tempmail_provider import ChatTempMailProvider
+from .do22_provider import Do22Provider
 from .domain_imap_provider import DomainIMAPProvider
 from .duckmail_provider import DuckMailProvider
 from .mailtm_provider import MailTmProvider
@@ -22,6 +23,7 @@ __all__ = [
     'EmailProvider',
     'ChatGPTMailProvider',
     'ChatTempMailProvider',
+    'Do22Provider',
     'DomainIMAPProvider',
     'DuckMailProvider',
     'MailTmProvider',
