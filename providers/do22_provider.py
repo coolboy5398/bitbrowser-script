@@ -79,6 +79,18 @@ class Do22Provider(EmailProvider):
         """获取域名匹配模式"""
         return ["22.do"]
 
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识"""
+        email = str(self.current_email or self.address or "").strip()
+        bearer = str(self.bearer_token or "").strip()
+        if not email and not bearer:
+            return ""
+        if email and bearer:
+            return f"{self.API_BASE}/inbox?email={email}&bearer_token={bearer}"
+        if email:
+            return f"{self.API_BASE}/inbox?email={email}"
+        return f"{self.API_BASE}/token?bearer_token={bearer}"
+
     def _normalize_account_type(self, value: str) -> str:
         text = str(value or "standard").strip().lower()
         if text in {"premium", "private"}:

@@ -73,6 +73,13 @@ class DomainIMAPProvider(EmailProvider):
     def get_domain_patterns(self) -> list:
         """获取域名匹配模式"""
         return self.AVAILABLE_DOMAINS
+
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识"""
+        email = str(self.generated_email or '').strip()
+        if not email:
+            return ""
+        return f"imap://{self.imap_host}/INBOX?to={email}"
     
     # ==================== 邮箱地址生成 ====================
     

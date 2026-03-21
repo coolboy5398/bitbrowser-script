@@ -49,6 +49,13 @@ class DuckMailProvider(EmailProvider):
         """获取域名匹配模式"""
         return ["duckmail.sbs", "api.duckmail.sbs"]
 
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识"""
+        token = str(self.current_token or "").strip()
+        if not token:
+            return ""
+        return f"{self.api_base}/messages?token={token}"
+
     def _headers(self, *, token: str = "", use_json: bool = False) -> Dict[str, str]:
         headers = {"Accept": "application/json"}
         if use_json:

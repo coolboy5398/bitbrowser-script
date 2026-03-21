@@ -72,6 +72,13 @@ class ChatGPTMailProvider(EmailProvider):
         """获取域名匹配模式"""
         return ["chatgpt.org.uk"]
 
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识"""
+        email = str(self.current_email or "").strip()
+        if not email:
+            return ""
+        return f"{self.base_url}/zh/{email}"
+
     def _build_headers(self, *, use_json: bool = False) -> Dict[str, str]:
         """构建 API 请求头"""
         headers = {

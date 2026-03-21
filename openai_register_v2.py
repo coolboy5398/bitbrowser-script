@@ -1485,7 +1485,7 @@ class HybridOpenAIRegister:
         return True
 
 
-def build_local_account_record(token_json: str, password: str) -> Optional[Dict[str, str]]:
+def build_local_account_record(token_json: str, password: str, mail_address: str = "") -> Optional[Dict[str, str]]:
     try:
         token_data = json.loads(token_json)
     except Exception as e:
@@ -1509,11 +1509,12 @@ def build_local_account_record(token_json: str, password: str) -> Optional[Dict[
         "token": access_token,
         "refresh_token": refresh_token,
         "expired": expired,
+        "mail_address": str(mail_address or "").strip(),
     }
 
 
-def save_account_to_db(token_json: str, password: str) -> bool:
-    record = build_local_account_record(token_json, password)
+def save_account_to_db(token_json: str, password: str, mail_address: str = "") -> bool:
+    record = build_local_account_record(token_json, password, mail_address=mail_address)
     if not record:
         return False
     try:
@@ -1557,7 +1558,10 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
         print(f"[Error] 邮箱服务 {provider_name} 未获取到邮箱")
         return None
 
-    print(f"[*] 成功获取邮箱: {email}")
+    register_email = str(email).strip()
+    mail_address = str(email_provider.get_mail_access_identifier() or register_email).strip()
+    print(f"[*] 成功获取邮箱: {register_email}")
+    print(f"[*] 取邮件标识: {mail_address}")
     password = secrets.token_urlsafe(16)
     random_name = random.choice([
         "Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Quinn", "Avery", "Blake"
@@ -1568,12 +1572,12 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
     birthdate = f"{random_year}-{random_month:02d}-{random_day:02d}"
 
     try:
-        registrar.run_register_flow(email, password, random_name, birthdate, email_provider)
-        token_json = registrar.perform_codex_oauth_login_http(email, password, email_provider=email_provider)
+        registrar.run_register_flow(register_email, password, random_name, birthdate, email_provider)
+        token_json = registrar.perform_codex_oauth_login_http(register_email, password, email_provider=email_provider)
         if not token_json:
             print("[Error] OAuth 获取 token 失败")
             return None
-        save_account_to_db(token_json, password)
+        save_account_to_db(token_json, password, mail_address=mail_address)
         return {"token_json": token_json, "password": password}
     except Exception as e:
         print(f"[Error] 运行时发生错误: {e}")

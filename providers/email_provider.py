@@ -11,6 +11,7 @@
 
 import re
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class EmailProvider(ABC):
@@ -44,6 +45,14 @@ class EmailProvider(ABC):
             list: 域名匹配模式列表,用于识别邮箱页面
         """
         pass
+
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件用的地址/标识
+
+        Returns:
+            str: 供后续取邮件使用的地址、token、账号或其他标识；默认返回空字符串
+        """
+        return ""
 
     # ==================== 邮箱地址获取 ====================
 

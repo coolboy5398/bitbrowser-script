@@ -22,11 +22,20 @@ def init_account_db(db_path: str = DB_FILE) -> None:
                 token TEXT NOT NULL,
                 refresh_token TEXT NOT NULL,
                 expired TEXT NOT NULL,
+                mail_address TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(openai_register_accounts)").fetchall()
+        }
+        if "mail_address" not in columns:
+            conn.execute(
+                "ALTER TABLE openai_register_accounts ADD COLUMN mail_address TEXT NOT NULL DEFAULT ''"
+            )
         conn.execute(
             """
             CREATE TRIGGER IF NOT EXISTS trg_openai_register_accounts_updated_at
@@ -50,6 +59,7 @@ def upsert_account_record(
     token: str,
     refresh_token: str,
     expired: str,
+    mail_address: str = "",
     db_path: str = DB_FILE,
 ) -> None:
     with _get_connection(db_path) as conn:
@@ -61,17 +71,19 @@ def upsert_account_record(
                 registered_at,
                 token,
                 refresh_token,
-                expired
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                expired,
+                mail_address
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(email) DO UPDATE SET
                 password = excluded.password,
                 registered_at = excluded.registered_at,
                 token = excluded.token,
                 refresh_token = excluded.refresh_token,
                 expired = excluded.expired,
+                mail_address = excluded.mail_address,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            (email, password, registered_at, token, refresh_token, expired),
+            (email, password, registered_at, token, refresh_token, expired, mail_address),
         )
         conn.commit()
 

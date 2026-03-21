@@ -44,6 +44,13 @@ class TempMailLolProvider(EmailProvider):
         """获取域名匹配模式"""
         return ["tempmail.lol", "api.tempmail.lol"]
 
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识"""
+        token = str(self.current_token or "").strip()
+        if not token:
+            return ""
+        return f"{self.BASE_URL}/inbox?token={token}"
+
     def get_email_from_page(self, cdp, session_id) -> str:
         """TempMail.lol 不支持从网页提取邮箱地址"""
         print("   ⚠️  TempMail.lol 不支持从网页提取邮箱")
