@@ -11,7 +11,7 @@ import urllib.parse
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
@@ -35,7 +35,20 @@ DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 DEFAULT_TARGET_ACCOUNT_COUNT = 100
-DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol"]
+DEFAULT_EMAIL_PROVIDERS = ["chat-tempmail"]
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def beijing_now() -> datetime:
+    return datetime.now(BEIJING_TZ)
+
+
+def format_beijing_rfc3339(dt: datetime) -> str:
+    return dt.astimezone(BEIJING_TZ).isoformat(timespec="seconds")
+
+
+def format_beijing_from_epoch(epoch_seconds: int) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=BEIJING_TZ).isoformat(timespec="seconds")
 
 
 def normalize_email_providers(email_providers: Optional[List[str]] = None) -> List[str]:
@@ -788,8 +801,8 @@ def exchange_code_for_token(
     account_id = str(auth_claims.get("chatgpt_account_id") or "").strip()
 
     now = int(time.time())
-    expired_rfc3339 = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + max(expires_in, 0)))
-    now_rfc3339 = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    expired_rfc3339 = format_beijing_from_epoch(now + max(expires_in, 0))
+    now_rfc3339 = format_beijing_from_epoch(now)
 
     config = {
         "id_token": id_token,
@@ -1604,7 +1617,7 @@ def build_local_account_record(token_json: str, password: str, mail_address: str
     access_token = str(token_data.get("access_token") or "").strip()
     refresh_token = str(token_data.get("refresh_token") or "").strip()
     expired = str(token_data.get("expired") or "").strip()
-    registered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    registered_at = format_beijing_rfc3339(beijing_now())
 
     if not email or not access_token:
         print("[Warning] token_json 缺少 email 或 access_token，跳过本地数据库保存")

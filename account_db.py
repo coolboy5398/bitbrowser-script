@@ -23,8 +23,8 @@ def init_account_db(db_path: str = DB_FILE) -> None:
                 refresh_token TEXT NOT NULL,
                 expired TEXT NOT NULL,
                 mail_address TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT datetime('now', '+8 hours'),
+                updated_at TEXT NOT NULL DEFAULT datetime('now', '+8 hours')
             )
             """
         )
@@ -43,7 +43,7 @@ def init_account_db(db_path: str = DB_FILE) -> None:
             FOR EACH ROW
             BEGIN
                 UPDATE openai_register_accounts
-                SET updated_at = CURRENT_TIMESTAMP
+                SET updated_at = datetime('now', '+8 hours')
                 WHERE id = OLD.id;
             END;
             """
@@ -81,7 +81,7 @@ def upsert_account_record(
                 refresh_token = excluded.refresh_token,
                 expired = excluded.expired,
                 mail_address = excluded.mail_address,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = datetime('now', '+8 hours')
             """,
             (email, password, registered_at, token, refresh_token, expired, mail_address),
         )
