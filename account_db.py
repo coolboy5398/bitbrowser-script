@@ -1,7 +1,13 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 DB_FILE = "accounts.db"
+BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def _beijing_now_str() -> str:
+    return datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _get_connection(db_path: str = DB_FILE) -> sqlite3.Connection:
@@ -23,8 +29,8 @@ def init_account_db(db_path: str = DB_FILE) -> None:
                 refresh_token TEXT NOT NULL,
                 expired TEXT NOT NULL,
                 mail_address TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT datetime('now', '+8 hours'),
-                updated_at TEXT NOT NULL DEFAULT datetime('now', '+8 hours')
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -62,6 +68,7 @@ def upsert_account_record(
     mail_address: str = "",
     db_path: str = DB_FILE,
 ) -> None:
+    now_str = _beijing_now_str()
     with _get_connection(db_path) as conn:
         conn.execute(
             """
@@ -72,8 +79,10 @@ def upsert_account_record(
                 token,
                 refresh_token,
                 expired,
-                mail_address
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                mail_address,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(email) DO UPDATE SET
                 password = excluded.password,
                 registered_at = excluded.registered_at,
@@ -81,9 +90,19 @@ def upsert_account_record(
                 refresh_token = excluded.refresh_token,
                 expired = excluded.expired,
                 mail_address = excluded.mail_address,
-                updated_at = datetime('now', '+8 hours')
+                updated_at = excluded.updated_at
             """,
-            (email, password, registered_at, token, refresh_token, expired, mail_address),
+            (
+                email,
+                password,
+                registered_at,
+                token,
+                refresh_token,
+                expired,
+                mail_address,
+                now_str,
+                now_str,
+            ),
         )
         conn.commit()
 

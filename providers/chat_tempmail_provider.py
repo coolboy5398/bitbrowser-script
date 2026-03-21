@@ -47,6 +47,8 @@ class ChatTempMailProvider(EmailProvider):
 
         # 缓存邮箱ID映射 {email_address: email_id}
         self.email_id_cache = {}
+        self.current_email = ""
+        self.current_email_id = ""
 
     def needs_browser_page(self) -> bool:
         """ChatTempMail不需要打开浏览器页面,直接通过API创建邮箱"""
@@ -59,6 +61,13 @@ class ChatTempMailProvider(EmailProvider):
     def get_domain_patterns(self) -> list:
         """获取域名匹配模式"""
         return self.domain_patterns
+
+    def get_mail_access_identifier(self) -> str:
+        """获取取邮件标识（返回可直接访问的 API inbox 地址）"""
+        email_id = str(self.current_email_id or "").strip()
+        if email_id:
+            return f"{self.api_base}/emails/{email_id}"
+        return ""
     
     # ==================== 邮箱地址获取 ====================
 
@@ -78,6 +87,8 @@ class ChatTempMailProvider(EmailProvider):
             str: 邮箱地址,失败返回None
         """
         print("   🔍 通过API创建邮箱...")
+        self.current_email = ""
+        self.current_email_id = ""
 
         if not self.api_key:
             print("   ✗ 错误: 未设置API密钥")
@@ -87,6 +98,8 @@ class ChatTempMailProvider(EmailProvider):
             email = self._create_email()
             if email:
                 print(f"   ✓ 创建邮箱成功: {email}")
+                if self.current_email_id:
+                    print(f"   ℹ️  取邮件标识: {self.current_email_id}")
                 return email
 
             print("   ⚠️  创建失败，尝试清理旧邮箱后重试...")
@@ -95,6 +108,8 @@ class ChatTempMailProvider(EmailProvider):
                 email = self._create_email()
                 if email:
                     print(f"   ✓ 清理后创建邮箱成功: {email}")
+                    if self.current_email_id:
+                        print(f"   ℹ️  取邮件标识: {self.current_email_id}")
                     return email
 
             print("   ✗ 创建邮箱失败")
@@ -258,17 +273,16 @@ class ChatTempMailProvider(EmailProvider):
 
             print(f"   📝 API响应: {response_data}")
 
-            # 提取邮箱地址 (API返回的字段是 'email' 而不是 'address')
-            email_address = result.get('email')
+            email_id = str(result.get('id') or '').strip()
+            email_address = str(result.get('address') or result.get('email') or '').strip()
             if email_address:
-                # 缓存邮箱ID
-                email_id = result.get('id')
+                self.current_email = email_address
+                self.current_email_id = email_id
                 if email_id:
                     self.email_id_cache[email_address] = email_id
-
                 return email_address
 
-            print(f"   ⚠️  API响应中没有email字段")
+            print("   ⚠️  API响应中没有address/email字段")
             return None
 
         except HTTPError as e:
