@@ -104,6 +104,96 @@ def safe_json_text(text: str) -> Dict[str, Any]:
         return {}
 
 
+def _clip_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "").replace("\r", "\\r").replace("\n", "\\n")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...(truncated)"
+
+
+def _sanitize_url_for_log(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(raw)
+    except Exception:
+        return _clip_text(raw, 200)
+    if not parsed.scheme or not parsed.netloc:
+        return _clip_text(raw, 200)
+
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    safe_pairs: List[str] = []
+    for key in sorted(query.keys()):
+        value = query.get(key, [""])[-1]
+        if key in {"client_id", "prompt", "screen_hint", "response_type"}:
+            safe_pairs.append(f"{key}={_clip_text(value, 60)}")
+        elif key in {"redirect_uri", "audience", "scope"}:
+            safe_pairs.append(f"{key}={_clip_text(value, 120)}")
+        else:
+            safe_pairs.append(f"{key}=[redacted]")
+
+    base = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    query_summary = "&".join(safe_pairs)
+    return f"{base}?{query_summary}" if query_summary else base
+
+
+def _response_history_for_log(resp: Any) -> List[Dict[str, Any]]:
+    history: List[Dict[str, Any]] = []
+    for item in getattr(resp, "history", []) or []:
+        headers = getattr(item, "headers", {}) or {}
+        location = headers.get("Location") or headers.get("location") or ""
+        history.append(
+            {
+                "status_code": getattr(item, "status_code", None),
+                "url": _sanitize_url_for_log(str(getattr(item, "url", "") or "")),
+                "location": _sanitize_url_for_log(str(location or "")),
+            }
+        )
+    return history
+
+
+def _response_summary_for_log(resp: Any, body_limit: int = 280) -> Dict[str, Any]:
+    headers = getattr(resp, "headers", {}) or {}
+    header_map = {str(k).lower(): str(v) for k, v in headers.items()}
+    return {
+        "status_code": getattr(resp, "status_code", None),
+        "url": _sanitize_url_for_log(str(getattr(resp, "url", "") or "")),
+        "content_type": header_map.get("content-type", ""),
+        "content_length": header_map.get("content-length", ""),
+        "location": _sanitize_url_for_log(header_map.get("location", "")),
+        "cf_ray": header_map.get("cf-ray", ""),
+        "server": header_map.get("server", ""),
+        "x_request_id": header_map.get("x-request-id", ""),
+        "history": _response_history_for_log(resp),
+        "body_excerpt": _clip_text(getattr(resp, "text", "") or "", body_limit),
+    }
+
+
+def _session_cookie_summary(session: Any) -> Dict[str, Any]:
+    jar = getattr(getattr(session, "cookies", None), "jar", None)
+    cookie_items = list(jar) if jar is not None else []
+    names = sorted({str(getattr(c, "name", "") or "") for c in cookie_items if getattr(c, "name", "")})
+    domains = sorted({str(getattr(c, "domain", "") or "") for c in cookie_items if getattr(c, "domain", "")})
+    interesting = {
+        name: name in names
+        for name in [
+            "oai-did",
+            "oai-client-auth-session",
+            "next-auth.csrf-token",
+            "next-auth.callback-url",
+            "cf_clearance",
+            "__cf_bm",
+        ]
+    }
+    return {
+        "count": len(cookie_items),
+        "names": names[:20],
+        "domains": domains[:10],
+        "interesting": interesting,
+    }
+
+
 def mgmt_headers(token: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
@@ -824,11 +914,15 @@ class HybridOpenAIRegister:
         data = safe_json(r)
         authorize_url = data.get("url", "")
         print(f"[*] signin/openai 状态: {r.status_code}")
-        if not authorize_url:
+        if authorize_url:
+            print(f"[*] signin/openai authorize_url: {_sanitize_url_for_log(authorize_url)}")
+        else:
+            print(f"[Debug] signin/openai 响应摘要: {json.dumps(_response_summary_for_log(r), ensure_ascii=False)}")
             raise RuntimeError("Failed to get authorize URL")
         return authorize_url
 
     def authorize(self, url: str) -> str:
+        print(f"[*] authorize 请求: {_sanitize_url_for_log(url)}")
         r = self.session.get(
             url,
             headers={
@@ -840,8 +934,13 @@ class HybridOpenAIRegister:
             timeout=30,
         )
         final_url = str(r.url)
-        print(f"[*] authorize 状态: {r.status_code} -> {final_url}")
+        print(f"[*] authorize 状态: {r.status_code} -> {_sanitize_url_for_log(final_url)}")
+        history = _response_history_for_log(r)
+        if history:
+            print(f"[*] authorize 跳转链: {json.dumps(history, ensure_ascii=False)}")
         if r.status_code >= 400:
+            print(f"[Debug] authorize 响应摘要: {json.dumps(_response_summary_for_log(r), ensure_ascii=False)}")
+            print(f"[Debug] authorize 会话 Cookie: {json.dumps(_session_cookie_summary(self.session), ensure_ascii=False)}")
             raise RuntimeError(f"Authorize 被拦截 ({r.status_code})")
         return final_url
 
@@ -1422,7 +1521,16 @@ class HybridOpenAIRegister:
         _random_delay(0.2, 0.5)
         auth_url = self.signin(email, csrf)
         _random_delay(0.3, 0.8)
-        final_url = self.authorize(auth_url)
+        try:
+            final_url = self.authorize(auth_url)
+        except Exception:
+            print(
+                f"[Debug] run_register_flow 上下文: email={email}, device_id={self.device_id}, "
+                f"auth_session_logging_id={self.auth_session_logging_id}, "
+                f"oauth_redirect_uri={self.oauth.redirect_uri}"
+            )
+            print(f"[Debug] run_register_flow auth_url: {_sanitize_url_for_log(auth_url)}")
+            raise
         final_path = urllib.parse.urlparse(final_url).path
         _random_delay(0.3, 0.8)
         print(f"[*] Authorize -> {final_path}")
@@ -1534,7 +1642,7 @@ def upload_token_to_cliproxyapi(base_url: str, token: str, file_name: str, token
     }
     resp_push = requests.post(upload_url, data=token_json.encode("utf-8"), headers=headers, timeout=15)
     if resp_push.status_code == 200:
-        print("[*] 自动注入 CLIProxyAPI 成功，API已热加载生效！喵~")
+        print("[*] ✅ 自动注入 CLIProxyAPI 成功，API已热加载生效！喵~")
         return True
     print(f"[-] 自动注入 CLIProxyAPI 失败: HTTP {resp_push.status_code} {resp_push.text}")
     return False
@@ -1544,6 +1652,10 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
     provider_name = str(email_provider_name or DEFAULT_EMAIL_PROVIDERS[0]).strip()
     print(f"[*] 本次使用邮箱服务: {provider_name}")
     registrar = HybridOpenAIRegister(proxy=proxy)
+    print(
+        f"[*] 注册会话: device_id={registrar.device_id}, "
+        f"auth_session_logging_id={registrar.auth_session_logging_id}"
+    )
     if not registrar.check_location():
         return None
 
@@ -1580,6 +1692,11 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
         save_account_to_db(token_json, password, mail_address=mail_address)
         return {"token_json": token_json, "password": password}
     except Exception as e:
+        print(
+            f"[Debug] register_once 失败上下文: provider={provider_name}, email={register_email}, "
+            f"mail_access={mail_address}, device_id={registrar.device_id}, "
+            f"auth_session_logging_id={registrar.auth_session_logging_id}"
+        )
         print(f"[Error] 运行时发生错误: {e}")
         return None
 
