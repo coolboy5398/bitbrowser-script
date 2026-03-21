@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
 
+from account_db import delete_account_by_email, init_account_db, upsert_account_record
 from providers import EmailProviderFactory
 
 AUTH_URL = "https://auth.openai.com/oauth/authorize"
@@ -301,8 +302,10 @@ def action_auto_check_401_and_delete(
 
     ok = 0
     fail = 0
+    local_deleted = 0
     for item in invalid_401:
         name = str(item.get("name") or "").strip()
+        account_email = str(item.get("account") or "").strip()
         if not name:
             fail += 1
             continue
@@ -310,11 +313,15 @@ def action_auto_check_401_and_delete(
             delete_auth_file(base_url, token, name, timeout)
             ok += 1
             print(f"[*] 已删除401账号: {name}")
+            if account_email:
+                deleted_rows = delete_account_by_email(account_email)
+                local_deleted += deleted_rows
+                print(f"[*] 本地数据库同步删除: {account_email} ({deleted_rows})")
         except Exception as e:
             fail += 1
             print(f"[FAIL] 删除401账号 {name}: {e}")
 
-    print(f"[*] 401账号删除完成: 成功 {ok}，失败 {fail}")
+    print(f"[*] 401账号删除完成: 成功 {ok}，失败 {fail}，本地删除 {local_deleted}")
     return {"detected": len(invalid_401), "deleted": ok, "failed": fail}
 
 
@@ -1478,6 +1485,46 @@ class HybridOpenAIRegister:
         return True
 
 
+def build_local_account_record(token_json: str, password: str) -> Optional[Dict[str, str]]:
+    try:
+        token_data = json.loads(token_json)
+    except Exception as e:
+        print(f"[Warning] 解析 token_json 失败，跳过本地数据库保存: {e}")
+        return None
+
+    email = str(token_data.get("email") or "").strip()
+    access_token = str(token_data.get("access_token") or "").strip()
+    refresh_token = str(token_data.get("refresh_token") or "").strip()
+    expired = str(token_data.get("expired") or "").strip()
+    registered_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    if not email or not access_token:
+        print("[Warning] token_json 缺少 email 或 access_token，跳过本地数据库保存")
+        return None
+
+    return {
+        "email": email,
+        "password": password,
+        "registered_at": registered_at,
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "expired": expired,
+    }
+
+
+def save_account_to_db(token_json: str, password: str) -> bool:
+    record = build_local_account_record(token_json, password)
+    if not record:
+        return False
+    try:
+        upsert_account_record(**record)
+        print(f"[*] 本地数据库已保存账号: {record['email']}")
+        return True
+    except Exception as e:
+        print(f"[Warning] 保存本地数据库失败: {e}")
+        return False
+
+
 def upload_token_to_cliproxyapi(base_url: str, token: str, file_name: str, token_json: str) -> bool:
     upload_url = f"{base_url.rstrip('/')}/v0/management/auth-files?name={os.path.basename(file_name)}"
     headers = {
@@ -1492,7 +1539,7 @@ def upload_token_to_cliproxyapi(base_url: str, token: str, file_name: str, token
     return False
 
 
-def register_once(proxy: Optional[str], email_provider_name: Optional[str] = None) -> Optional[str]:
+def register_once(proxy: Optional[str], email_provider_name: Optional[str] = None) -> Optional[Dict[str, str]]:
     provider_name = str(email_provider_name or DEFAULT_EMAIL_PROVIDERS[0]).strip()
     print(f"[*] 本次使用邮箱服务: {provider_name}")
     registrar = HybridOpenAIRegister(proxy=proxy)
@@ -1526,7 +1573,8 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
         if not token_json:
             print("[Error] OAuth 获取 token 失败")
             return None
-        return token_json
+        save_account_to_db(token_json, password)
+        return {"token_json": token_json, "password": password}
     except Exception as e:
         print(f"[Error] 运行时发生错误: {e}")
         return None
@@ -1579,10 +1627,11 @@ def register_until_target_count(
         attempt_no = success + 1
         provider_name = provider_names[(attempt_count - 1) % len(provider_names)]
         print(f"[*] 补量进度: {attempt_no}/{deficit}，第 {attempt_count} 次尝试，本次邮箱服务: {provider_name}")
-        token_json = register_once(proxy, email_provider_name=provider_name)
-        if not token_json:
+        token_result = register_once(proxy, email_provider_name=provider_name)
+        if not token_result:
             print("[-] 本次补量注册失败。")
             continue
+        token_json = token_result["token_json"]
         try:
             t_data = json.loads(token_json)
             fname_email = t_data.get("email", "unknown").replace("@", "_")
@@ -1606,6 +1655,7 @@ def register_until_target_count(
 
 
 def main() -> int:
+    init_account_db()
     parser = argparse.ArgumentParser(description="OpenAI 混合自动注册脚本")
     parser.add_argument("--proxy", default="http://127.0.0.1:7890", help="代理地址（默认 http://127.0.0.1:7890）")
     parser.add_argument("--once", action="store_true", help="只运行一次")
@@ -1681,8 +1731,9 @@ def main() -> int:
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] >>> 开始第 {count} 次注册流程 <<<")
         provider_name = email_providers[(count - 1) % len(email_providers)]
         print(f"[*] 本次轮换邮箱服务: {provider_name}")
-        token_json = register_once(args.proxy, email_provider_name=provider_name)
-        if token_json:
+        token_result = register_once(args.proxy, email_provider_name=provider_name)
+        if token_result:
+            token_json = token_result["token_json"]
             try:
                 t_data = json.loads(token_json)
                 fname_email = t_data.get("email", "unknown").replace("@", "_")
