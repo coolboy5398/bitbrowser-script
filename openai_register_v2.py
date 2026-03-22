@@ -44,11 +44,11 @@ def beijing_now() -> datetime:
 
 
 def format_beijing_rfc3339(dt: datetime) -> str:
-    return dt.astimezone(BEIJING_TZ).isoformat(timespec="seconds")
+    return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def format_beijing_from_epoch(epoch_seconds: int) -> str:
-    return datetime.fromtimestamp(epoch_seconds, tz=BEIJING_TZ).isoformat(timespec="seconds")
+    return datetime.fromtimestamp(epoch_seconds, tz=BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def normalize_email_providers(email_providers: Optional[List[str]] = None) -> List[str]:
