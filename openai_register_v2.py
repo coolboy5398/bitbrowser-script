@@ -375,7 +375,7 @@ def run_preclean_probe_all(
         total = len(futures)
         for done, future in enumerate(as_completed(futures), start=1):
             results.append(future.result())
-            if done % 100 == 0 or done == total:
+            if done == total:
                 print(f"[*] 401检测进度: {done}/{total}")
     return results
 
