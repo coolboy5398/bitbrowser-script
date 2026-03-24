@@ -16,7 +16,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests
 
-from account_db import delete_account_by_email, init_account_db, upsert_account_record
+from account_db import (
+    delete_account_by_email,
+    init_account_db,
+    is_email_suffix_disabled,
+    upsert_account_record,
+)
 from providers import EmailProviderFactory
 
 AUTH_URL = "https://auth.openai.com/oauth/authorize"
@@ -1674,19 +1679,42 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
 
     try:
         email_provider = EmailProviderFactory.create(provider_name, proxies=registrar.proxies, timeout=15)
-        email = email_provider.get_email_from_api()
+    except Exception as e:
+        print(f"[Error] 邮箱服务 {provider_name} 初始化失败: {e}")
+        return None
+
+    register_email = ""
+    mail_address = ""
+    max_email_attempts = 5
+
+    try:
+        for attempt in range(1, max_email_attempts + 1):
+            email = email_provider.get_email_from_api()
+            if not email:
+                continue
+
+            candidate_email = str(email).strip()
+            email_suffix = candidate_email[candidate_email.rfind("@") :].lower() if "@" in candidate_email else ""
+            if is_email_suffix_disabled("OpenAI", email_suffix):
+                print(
+                    f"[Warning] 邮箱后缀已禁用，跳过: {candidate_email} "
+                    f"(subscription_type=OpenAI, attempt={attempt}/{max_email_attempts})"
+                )
+                continue
+
+            register_email = candidate_email
+            mail_address = str(email_provider.get_mail_access_identifier() or register_email).strip()
+            print(f"[*] 成功获取邮箱: {register_email}")
+            print(f"[*] 取邮件标识: {mail_address}")
+            break
     except Exception as e:
         print(f"[Error] 邮箱服务 {provider_name} 调用失败: {e}")
         return None
 
-    if not email:
-        print(f"[Error] 邮箱服务 {provider_name} 未获取到邮箱")
+    if not register_email:
+        print(f"[Error] 邮箱服务 {provider_name} 未获取到可用邮箱")
         return None
 
-    register_email = str(email).strip()
-    mail_address = str(email_provider.get_mail_access_identifier() or register_email).strip()
-    print(f"[*] 成功获取邮箱: {register_email}")
-    print(f"[*] 取邮件标识: {mail_address}")
     password = secrets.token_urlsafe(16)
     random_name = random.choice([
         "Alex", "Sam", "Jordan", "Taylor", "Morgan", "Casey", "Riley", "Quinn", "Avery", "Blake"

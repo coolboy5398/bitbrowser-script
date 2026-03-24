@@ -182,6 +182,33 @@ def get_account_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[st
 
 
 
+def extract_email_suffix(email: str) -> str:
+    email_text = str(email or "").strip().lower()
+    if "@" not in email_text:
+        return ""
+    return "@" + email_text.rsplit("@", 1)[1]
+
+
+
+def is_email_suffix_disabled(
+    subscription_type: str,
+    email_suffix: str,
+    db_path: str = DB_FILE,
+) -> bool:
+    normalized_subscription_type = str(subscription_type or "").strip()
+    normalized_suffix = extract_email_suffix(email_suffix)
+    if not normalized_subscription_type or not normalized_suffix:
+        return False
+
+    row = get_disabled_email_suffix(
+        normalized_subscription_type,
+        normalized_suffix,
+        db_path=db_path,
+    )
+    return bool(row and int(row.get("enabled") or 0) == 1)
+
+
+
 def upsert_disabled_email_suffix(
     *,
     subscription_type: str,
