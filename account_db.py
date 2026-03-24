@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 DB_FILE = "accounts.db"
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -49,6 +49,61 @@ def init_account_db(db_path: str = DB_FILE) -> None:
             FOR EACH ROW
             BEGIN
                 UPDATE openai_register_accounts
+                SET updated_at = datetime('now', '+8 hours')
+                WHERE id = OLD.id;
+            END;
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS disabled_email_suffixes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_type TEXT NOT NULL,
+                email_suffix TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        disabled_email_suffix_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(disabled_email_suffixes)").fetchall()
+        }
+        if "subscription_type" not in disabled_email_suffix_columns:
+            conn.execute(
+                "ALTER TABLE disabled_email_suffixes ADD COLUMN subscription_type TEXT NOT NULL DEFAULT ''"
+            )
+        if "email_suffix" not in disabled_email_suffix_columns:
+            conn.execute(
+                "ALTER TABLE disabled_email_suffixes ADD COLUMN email_suffix TEXT NOT NULL DEFAULT ''"
+            )
+        if "enabled" not in disabled_email_suffix_columns:
+            conn.execute(
+                "ALTER TABLE disabled_email_suffixes ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
+            )
+        if "created_at" not in disabled_email_suffix_columns:
+            conn.execute(
+                "ALTER TABLE disabled_email_suffixes ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            )
+        if "updated_at" not in disabled_email_suffix_columns:
+            conn.execute(
+                "ALTER TABLE disabled_email_suffixes ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_disabled_email_suffixes_subscription_suffix
+            ON disabled_email_suffixes (subscription_type, email_suffix)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_disabled_email_suffixes_updated_at
+            AFTER UPDATE ON disabled_email_suffixes
+            FOR EACH ROW
+            BEGIN
+                UPDATE disabled_email_suffixes
                 SET updated_at = datetime('now', '+8 hours')
                 WHERE id = OLD.id;
             END;
@@ -124,3 +179,114 @@ def get_account_by_email(email: str, db_path: str = DB_FILE) -> Optional[Dict[st
             (email,),
         ).fetchone()
     return dict(row) if row else None
+
+
+
+def upsert_disabled_email_suffix(
+    *,
+    subscription_type: str,
+    email_suffix: str,
+    enabled: bool = True,
+    db_path: str = DB_FILE,
+) -> None:
+    now_str = _beijing_now_str()
+    with _get_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO disabled_email_suffixes (
+                subscription_type,
+                email_suffix,
+                enabled,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(subscription_type, email_suffix) DO UPDATE SET
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at
+            """,
+            (
+                subscription_type.strip(),
+                email_suffix.strip(),
+                1 if enabled else 0,
+                now_str,
+                now_str,
+            ),
+        )
+        conn.commit()
+
+
+def delete_disabled_email_suffix(
+    subscription_type: str,
+    email_suffix: str,
+    db_path: str = DB_FILE,
+) -> int:
+    with _get_connection(db_path) as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM disabled_email_suffixes
+            WHERE subscription_type = ? AND email_suffix = ?
+            """,
+            (subscription_type.strip(), email_suffix.strip()),
+        )
+        conn.commit()
+        return int(cursor.rowcount or 0)
+
+
+def get_disabled_email_suffix(
+    subscription_type: str,
+    email_suffix: str,
+    db_path: str = DB_FILE,
+) -> Optional[Dict[str, Any]]:
+    with _get_connection(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM disabled_email_suffixes
+            WHERE subscription_type = ? AND email_suffix = ?
+            """,
+            (subscription_type.strip(), email_suffix.strip()),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_disabled_email_suffixes(
+    subscription_type: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    db_path: str = DB_FILE,
+) -> List[Dict[str, Any]]:
+    query = "SELECT * FROM disabled_email_suffixes"
+    clauses = []
+    params = []
+
+    if subscription_type is not None:
+        clauses.append("subscription_type = ?")
+        params.append(subscription_type.strip())
+    if enabled is not None:
+        clauses.append("enabled = ?")
+        params.append(1 if enabled else 0)
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY subscription_type ASC, email_suffix ASC"
+
+    with _get_connection(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_disabled_email_suffix_enabled(
+    subscription_type: str,
+    email_suffix: str,
+    enabled: bool,
+    db_path: str = DB_FILE,
+) -> int:
+    with _get_connection(db_path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE disabled_email_suffixes
+            SET enabled = ?
+            WHERE subscription_type = ? AND email_suffix = ?
+            """,
+            (1 if enabled else 0, subscription_type.strip(), email_suffix.strip()),
+        )
+        conn.commit()
+        return int(cursor.rowcount or 0)
