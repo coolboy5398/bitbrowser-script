@@ -40,7 +40,7 @@ DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 DEFAULT_TARGET_ACCOUNT_COUNT = 120
-DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol"]
+DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol"] #chatgpt,tempmail-lol,chat-tempmail,do22,domain-imap,duckmail,mailtm
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 
