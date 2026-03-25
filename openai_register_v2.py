@@ -18,6 +18,7 @@ from curl_cffi import requests
 
 from account_db import (
     delete_account_by_email,
+    get_account_by_email,
     init_account_db,
     is_email_suffix_disabled,
     upsert_account_record,
@@ -175,6 +176,46 @@ def safe_json_text(text: str) -> Dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def build_token_config_json(
+    token_resp: Dict[str, Any],
+    *,
+    fallback_email: str = "",
+    fallback_account_id: str = "",
+    fallback_refresh_token: str = "",
+) -> str:
+    access_token = str(token_resp.get("access_token") or "").strip()
+    refresh_token = str(token_resp.get("refresh_token") or fallback_refresh_token or "").strip()
+    id_token = str(token_resp.get("id_token") or "").strip()
+    expires_in = _to_int(token_resp.get("expires_in"))
+
+    if not access_token:
+        raise RuntimeError("token response missing access_token")
+
+    claims = _jwt_claims_no_verify(id_token)
+    if not claims:
+        claims = _jwt_claims_no_verify(access_token)
+
+    email = str(claims.get("email") or fallback_email or "").strip()
+    auth_claims = claims.get("https://api.openai.com/auth") or {}
+    account_id = str(auth_claims.get("chatgpt_account_id") or fallback_account_id or "").strip()
+
+    now = int(time.time())
+    expired_rfc3339 = format_beijing_from_epoch(now + max(expires_in, 0))
+    now_rfc3339 = format_beijing_from_epoch(now)
+
+    config = {
+        "id_token": id_token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "account_id": account_id,
+        "last_refresh": now_rfc3339,
+        "email": email,
+        "type": "codex",
+        "expired": expired_rfc3339,
+    }
+    return json.dumps(config, ensure_ascii=False, separators=(",", ":"))
 
 
 def _clip_text(value: Any, limit: int = 240) -> str:
@@ -446,6 +487,8 @@ def action_auto_check_401_and_delete(
     timeout: int,
     results: List[Dict[str, Any]],
     output_401: str,
+    proxy: Optional[str] = None,
+    fallback_email_provider: Optional[str] = None,
 ) -> Dict[str, int]:
     invalid_401 = [r for r in results if r.get("invalid_401")]
     invalid_401.sort(key=lambda x: x.get("name") or "")
@@ -460,22 +503,45 @@ def action_auto_check_401_and_delete(
 
     print(f"[*] 检测到401账号: {len(invalid_401)}")
     if not invalid_401:
-        print("[*] 无需删除401账号。")
-        return {"detected": 0, "deleted": 0, "failed": 0}
+        print("[*] 无需处理401账号。")
+        return {"detected": 0, "recovered": 0, "deleted": 0, "failed": 0, "skipped": 0}
 
-    ok = 0
+    recovered = 0
+    deleted = 0
     fail = 0
+    skipped = 0
     local_deleted = 0
     for item in invalid_401:
         name = str(item.get("name") or "").strip()
         account_email = str(item.get("account") or "").strip()
+        recovery = recover_invalid_401_account(
+            base_url=base_url,
+            token=token,
+            timeout=timeout,
+            proxy=proxy,
+            item=item,
+            fallback_email_provider=fallback_email_provider,
+        )
+        if recovery.get("recovered"):
+            recovered += 1
+            print(f"[*] 已恢复401账号: {account_email or name} ({recovery.get('method')})")
+            continue
+
+        error_text = str(recovery.get("error") or "").strip()
+        if not recovery.get("delete_allowed", True):
+            skipped += 1
+            print(f"[Warning] 401账号暂未恢复，保留待后续处理: {account_email or name} -> {error_text}")
+            continue
+
         if not name:
             fail += 1
+            print(f"[FAIL] 401账号缺少名称，无法删除: {account_email or item}")
             continue
+
         try:
             delete_auth_file(base_url, token, name, timeout)
-            ok += 1
-            print(f"[*] 已删除401账号: {name}")
+            deleted += 1
+            print(f"[*] 已删除无法恢复的401账号: {name}")
             if account_email:
                 deleted_rows = delete_account_by_email(account_email)
                 local_deleted += deleted_rows
@@ -484,14 +550,24 @@ def action_auto_check_401_and_delete(
             fail += 1
             print(f"[FAIL] 删除401账号 {name}: {e}")
 
-    print(f"[*] 401账号删除完成: 成功 {ok}，失败 {fail}，本地删除 {local_deleted}")
-    return {"detected": len(invalid_401), "deleted": ok, "failed": fail}
+    print(
+        f"[*] 401账号处理完成: 恢复 {recovered}，删除 {deleted}，删除失败 {fail}，"
+        f"保留待处理 {skipped}，本地删除 {local_deleted}"
+    )
+    return {
+        "detected": len(invalid_401),
+        "recovered": recovered,
+        "deleted": deleted,
+        "failed": fail,
+        "skipped": skipped,
+    }
 
 
 def preclean_401_and_delete(
     base_url: str,
     token: str,
     *,
+    proxy: Optional[str] = None,
     target_type: str = DEFAULT_PRECHECK_TARGET_TYPE,
     provider: Optional[str] = None,
     workers: int = DEFAULT_PRECHECK_WORKERS,
@@ -500,12 +576,13 @@ def preclean_401_and_delete(
     user_agent: str = DEFAULT_PRECHECK_UA,
     chatgpt_account_id: str = "",
     output_401: str = DEFAULT_PRECHECK_OUTPUT_401,
+    fallback_email_provider: Optional[str] = None,
 ) -> Dict[str, int]:
     if not base_url or not token:
-        print("[*] 跳过注册前401清理：未配置 CLIProxyAPI 管理接口或 Token")
-        return {"detected": 0, "deleted": 0, "failed": 0}
+        print("[*] 跳过注册前401处理：未配置 CLIProxyAPI 管理接口或 Token")
+        return {"detected": 0, "recovered": 0, "deleted": 0, "failed": 0, "skipped": 0}
 
-    print("[*] 注册前开始检查并自动删除 401 账号...")
+    print("[*] 注册前开始检查并优先恢复 401 账号...")
     try:
         results = run_preclean_probe_all(
             base_url=base_url,
@@ -524,10 +601,12 @@ def preclean_401_and_delete(
             timeout=timeout,
             results=results,
             output_401=output_401,
+            proxy=proxy,
+            fallback_email_provider=fallback_email_provider,
         )
     except Exception as e:
-        print(f"[Warning] 注册前401清理失败: {e}")
-        return {"detected": 0, "deleted": 0, "failed": 0}
+        print(f"[Warning] 注册前401处理失败: {e}")
+        return {"detected": 0, "recovered": 0, "deleted": 0, "failed": 0, "skipped": 0}
 
 
 def _random_delay(low: float = 0.3, high: float = 1.0) -> None:
@@ -849,32 +928,46 @@ def exchange_code_for_token(
     if resp.status_code != 200:
         raise RuntimeError(f"token exchange failed: {resp.status_code}: {resp.text}")
 
-    token_resp = resp.json()
-    access_token = (token_resp.get("access_token") or "").strip()
-    refresh_token = (token_resp.get("refresh_token") or "").strip()
-    id_token = (token_resp.get("id_token") or "").strip()
-    expires_in = _to_int(token_resp.get("expires_in"))
+    return build_token_config_json(resp.json())
 
-    claims = _jwt_claims_no_verify(id_token)
-    email = str(claims.get("email") or "").strip()
-    auth_claims = claims.get("https://api.openai.com/auth") or {}
-    account_id = str(auth_claims.get("chatgpt_account_id") or "").strip()
 
-    now = int(time.time())
-    expired_rfc3339 = format_beijing_from_epoch(now + max(expires_in, 0))
-    now_rfc3339 = format_beijing_from_epoch(now)
+def refresh_token_for_token_json(
+    *,
+    refresh_token: str,
+    fallback_email: str = "",
+    fallback_account_id: str = "",
+    proxies: Any = None,
+    timeout: int = 30,
+) -> str:
+    refresh_token_text = str(refresh_token or "").strip()
+    if not refresh_token_text:
+        raise ValueError("refresh_token 为空")
 
-    config = {
-        "id_token": id_token,
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "account_id": account_id,
-        "last_refresh": now_rfc3339,
-        "email": email,
-        "type": "codex",
-        "expired": expired_rfc3339,
-    }
-    return json.dumps(config, ensure_ascii=False, separators=(",", ":"))
+    resp = requests.post(
+        TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "client_id": CLIENT_ID,
+            "refresh_token": refresh_token_text,
+            "scope": DEFAULT_SCOPE,
+        },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+        },
+        proxies=proxies,
+        impersonate="chrome",
+        timeout=timeout,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"refresh token failed: {resp.status_code}: {resp.text}")
+
+    return build_token_config_json(
+        resp.json(),
+        fallback_email=fallback_email,
+        fallback_account_id=fallback_account_id,
+        fallback_refresh_token=refresh_token_text,
+    )
 
 
 class HybridOpenAIRegister:
@@ -1707,18 +1800,320 @@ def save_account_to_db(token_json: str, password: str, mail_address: str = "") -
         return False
 
 
-def upload_token_to_cliproxyapi(base_url: str, token: str, file_name: str, token_json: str) -> bool:
+def _post_token_to_cliproxyapi(
+    base_url: str,
+    token: str,
+    file_name: str,
+    token_json: str,
+    *,
+    timeout: int = 15,
+) -> Tuple[int, str]:
     upload_url = f"{base_url.rstrip('/')}/v0/management/auth-files?name={os.path.basename(file_name)}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
-    resp_push = requests.post(upload_url, data=token_json.encode("utf-8"), headers=headers, timeout=15)
-    if resp_push.status_code == 200:
+    resp_push = requests.post(upload_url, data=token_json.encode("utf-8"), headers=headers, timeout=timeout)
+    return resp_push.status_code, str(resp_push.text or "")
+
+
+
+def upload_token_to_cliproxyapi(base_url: str, token: str, file_name: str, token_json: str) -> bool:
+    try:
+        status_code, response_text = _post_token_to_cliproxyapi(base_url, token, file_name, token_json)
+    except Exception as e:
+        print(f"[-] 自动注入 CLIProxyAPI 失败: {e}")
+        return False
+
+    if status_code in (200, 201, 204):
         print("[*] ✅ 自动注入 CLIProxyAPI 成功，API已热加载生效！喵~")
         return True
-    print(f"[-] 自动注入 CLIProxyAPI 失败: HTTP {resp_push.status_code} {resp_push.text}")
+    print(f"[-] 自动注入 CLIProxyAPI 失败: HTTP {status_code} {response_text}")
     return False
+
+
+def build_proxy_mapping(proxy: Optional[str]) -> Any:
+    if not proxy:
+        return None
+    return {"http": proxy, "https": proxy}
+
+
+def infer_recovery_provider_name(
+    account_email: str,
+    mail_address: str = "",
+    provider_hint: str = "",
+    fallback_provider: str = "",
+) -> str:
+    known_providers = {
+        "chatgpt",
+        "chat-tempmail",
+        "do22",
+        "domain-imap",
+        "duckmail",
+        "mailtm",
+        "tempmail-lol",
+    }
+    for candidate in [provider_hint, fallback_provider]:
+        candidate_text = str(candidate or "").strip().lower()
+        if candidate_text in known_providers:
+            return candidate_text
+
+    mail_address_text = str(mail_address or "").strip().lower()
+    if "mail.chatgpt.org.uk" in mail_address_text:
+        return "chatgpt"
+    if "chat-tempmail.com/api/" in mail_address_text:
+        return "chat-tempmail"
+    if "22.do/api/v2/" in mail_address_text:
+        return "do22"
+    if "duckmail.sbs" in mail_address_text:
+        return "duckmail"
+    if "api.mail.tm" in mail_address_text:
+        return "mailtm"
+    if "api.tempmail.lol" in mail_address_text:
+        return "tempmail-lol"
+    if mail_address_text.startswith("imap://"):
+        return "domain-imap"
+
+    email_text = str(account_email or "").strip().lower()
+    if email_text.endswith("@chatgpt.org.uk"):
+        return "chatgpt"
+    return ""
+
+
+def restore_email_provider_session(provider: Any, provider_name: str, email: str, mail_address: str) -> None:
+    provider_name = str(provider_name or "").strip().lower()
+    email_text = str(email or "").strip()
+    raw_mail_address = str(mail_address or "").strip()
+    parsed = urllib.parse.urlparse(raw_mail_address) if raw_mail_address else urllib.parse.urlparse("")
+    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    query_last = {
+        str(key): str(values[-1])
+        for key, values in query.items()
+        if values
+    }
+
+    if provider_name == "chatgpt":
+        provider.current_email = email_text
+        return
+
+    if provider_name == "chat-tempmail":
+        provider.current_email = email_text
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if len(path_parts) >= 2 and path_parts[-2] == "emails":
+            email_id = path_parts[-1]
+            provider.current_email_id = email_id
+            if email_text:
+                email_id_cache = getattr(provider, "email_id_cache", None)
+                if not isinstance(email_id_cache, dict):
+                    email_id_cache = {}
+                    setattr(provider, "email_id_cache", email_id_cache)
+                email_id_cache[email_text] = email_id
+        return
+
+    if provider_name == "do22":
+        provider.current_email = query_last.get("email") or email_text
+        bearer_token = query_last.get("bearer_token") or query_last.get("token") or ""
+        if bearer_token:
+            provider.bearer_token = bearer_token
+        return
+
+    if provider_name == "duckmail":
+        provider.current_email = email_text
+        provider.current_token = query_last.get("token") or str(getattr(provider, "current_token", "") or "")
+        return
+
+    if provider_name == "mailtm":
+        provider.current_email = email_text
+        provider.current_token = query_last.get("token") or str(getattr(provider, "current_token", "") or "")
+        return
+
+    if provider_name == "tempmail-lol":
+        provider.current_email = email_text
+        provider.current_token = query_last.get("token") or str(getattr(provider, "current_token", "") or "")
+        return
+
+    if provider_name == "domain-imap":
+        provider.generated_email = email_text
+
+
+def build_recovery_email_provider(
+    provider_name: str,
+    proxies: Any,
+    timeout: int,
+    account_email: str,
+    mail_address: str,
+) -> Optional[Any]:
+    provider_key = str(provider_name or "").strip().lower()
+    if not provider_key:
+        return None
+
+    try:
+        kwargs: Dict[str, Any] = {}
+        if provider_key != "domain-imap":
+            kwargs = {"proxies": proxies, "timeout": timeout}
+        provider = EmailProviderFactory.create(provider_key, **kwargs)
+        restore_email_provider_session(provider, provider_key, account_email, mail_address)
+        return provider
+    except Exception as e:
+        print(f"[Warning] 恢复邮箱 provider 失败 ({provider_key}): {e}")
+        return None
+
+
+def replace_token_in_cliproxyapi(
+    base_url: str,
+    token: str,
+    timeout: int,
+    remote_name: str,
+    account_email: str,
+    token_json: str,
+) -> bool:
+    preferred_name = str(remote_name or "").strip()
+    if not preferred_name:
+        preferred_name = f"token_{account_email.replace('@', '_')}_{int(time.time())}.json"
+        return upload_token_to_cliproxyapi(base_url, token, preferred_name, token_json)
+
+    # 401 恢复场景下，CLIProxyAPI 同名上传可能不会真正覆盖旧文件，
+    # 因此这里固定采用“先删旧文件，再注入新 token”的方式替换远端账号。
+    try:
+        delete_auth_file(base_url, token, remote_name, timeout)
+        print(f"[*] 已删除旧401账号文件，准备重新注入: {remote_name}")
+    except Exception as e:
+        print(f"[Warning] 删除旧401账号文件失败，无法重新注入 {remote_name}: {e}")
+        return False
+
+    try:
+        status_code, response_text = _post_token_to_cliproxyapi(base_url, token, preferred_name, token_json)
+    except Exception as e:
+        print(f"[Warning] 重新注入恢复后的 token 失败: {e}")
+        status_code, response_text = 0, str(e)
+
+    if status_code in (200, 201, 204):
+        print("[*] ✅ 自动注入 CLIProxyAPI 成功，API已热加载生效！喵~")
+        return True
+
+    print(f"[-] 自动注入 CLIProxyAPI 失败: HTTP {status_code} {response_text}")
+    fallback_name = f"token_{account_email.replace('@', '_')}_{int(time.time())}_recover.json"
+    if fallback_name == preferred_name:
+        return False
+
+    print(f"[Warning] 使用原文件名重新注入失败，尝试使用新文件名回退: {fallback_name}")
+    return upload_token_to_cliproxyapi(base_url, token, fallback_name, token_json)
+
+
+def recover_invalid_401_account(
+    *,
+    base_url: str,
+    token: str,
+    timeout: int,
+    proxy: Optional[str],
+    item: Dict[str, Any],
+    fallback_email_provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    name = str(item.get("name") or "").strip()
+    account_email = str(item.get("account") or "").strip()
+    result: Dict[str, Any] = {
+        "name": name,
+        "account": account_email,
+        "recovered": False,
+        "delete_allowed": True,
+        "method": "",
+        "error": "",
+    }
+
+    if not account_email:
+        result["error"] = "missing account email"
+        return result
+
+    local_record = get_account_by_email(account_email)
+    if not local_record:
+        result["error"] = "local account record not found"
+        return result
+
+    local_password = str(local_record.get("password") or "")
+    local_refresh_token = str(local_record.get("refresh_token") or "").strip()
+    local_mail_address = str(local_record.get("mail_address") or "").strip()
+    proxies = build_proxy_mapping(proxy)
+    provider_name = infer_recovery_provider_name(
+        account_email,
+        mail_address=local_mail_address,
+        provider_hint=str(item.get("provider") or ""),
+        fallback_provider=str(fallback_email_provider or ""),
+    )
+
+    token_json: Optional[str] = None
+    refresh_error = ""
+    oauth_error = ""
+
+    if local_refresh_token:
+        try:
+            token_json = refresh_token_for_token_json(
+                refresh_token=local_refresh_token,
+                fallback_email=account_email,
+                proxies=proxies,
+                timeout=max(30, int(timeout or 0)),
+            )
+            result["method"] = "refresh_token"
+            print(f"[*] 401账号 refresh_token 刷新成功: {account_email}")
+        except Exception as e:
+            refresh_error = str(e)
+            print(f"[Warning] 401账号 refresh_token 刷新失败 {account_email}: {e}")
+    else:
+        refresh_error = "missing refresh_token"
+
+    if not token_json:
+        if not local_password:
+            oauth_error = "missing local password"
+        else:
+            email_provider = build_recovery_email_provider(
+                provider_name=provider_name,
+                proxies=proxies,
+                timeout=15,
+                account_email=account_email,
+                mail_address=local_mail_address,
+            )
+            try:
+                registrar = HybridOpenAIRegister(proxy=proxy)
+                token_json = registrar.perform_codex_oauth_login_http(
+                    account_email,
+                    local_password,
+                    email_provider=email_provider,
+                )
+                if token_json:
+                    result["method"] = "oauth_relogin"
+                    print(f"[*] 401账号 OAuth 重登成功: {account_email}")
+                else:
+                    oauth_error = "oauth login returned empty token"
+            except Exception as e:
+                oauth_error = str(e)
+                print(f"[Warning] 401账号 OAuth 重登失败 {account_email}: {e}")
+
+    if not token_json:
+        error_parts = []
+        if refresh_error:
+            error_parts.append(f"refresh失败: {refresh_error}")
+        if oauth_error:
+            error_parts.append(f"oauth失败: {oauth_error}")
+        result["error"] = "; ".join(error_parts) or "未恢复到新 token"
+        return result
+
+    if not save_account_to_db(token_json, local_password, mail_address=local_mail_address):
+        print(f"[Warning] 401账号恢复后，本地数据库更新失败: {account_email}")
+
+    if replace_token_in_cliproxyapi(
+        base_url=base_url,
+        token=token,
+        timeout=timeout,
+        remote_name=name,
+        account_email=account_email,
+        token_json=token_json,
+    ):
+        result["recovered"] = True
+        result["error"] = ""
+        return result
+
+    result["delete_allowed"] = False
+    result["error"] = "已获取新 token，但重新注入 CLIProxyAPI 失败"
+    return result
 
 
 def register_once(proxy: Optional[str], email_provider_name: Optional[str] = None) -> Optional[Dict[str, str]]:
@@ -1943,6 +2338,7 @@ def main() -> int:
         preclean_401_and_delete(
             base_url=args.mgmt_url,
             token=args.mgmt_token,
+            proxy=args.proxy,
             target_type=args.preclean_target_type,
             provider=args.preclean_provider,
             workers=args.preclean_workers,
@@ -1951,6 +2347,7 @@ def main() -> int:
             user_agent=args.preclean_user_agent,
             chatgpt_account_id=args.preclean_chatgpt_account_id,
             output_401=args.preclean_output_401,
+            fallback_email_provider=selected_provider,
         )
         register_until_target_count(
             proxy=args.proxy,
