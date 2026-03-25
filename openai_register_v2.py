@@ -40,7 +40,8 @@ DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
 DEFAULT_TARGET_ACCOUNT_COUNT = 120
-DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol"] #chatgpt,tempmail-lol,chat-tempmail,do22,domain-imap,duckmail,mailtm
+DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol","chatgpt","chat-tempmail","do22","duckmail","mailtm"] #chatgpt,tempmail-lol,chat-tempmail,do22,domain-imap,duckmail,mailtm
+PROVIDER_SELECTION_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openai_register_v2_provider_state.json")
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 
@@ -63,6 +64,60 @@ def normalize_email_providers(email_providers: Optional[List[str]] = None) -> Li
         if str(name).strip()
     ]
     return provider_names or DEFAULT_EMAIL_PROVIDERS.copy()
+
+
+def load_last_selected_provider() -> str:
+    try:
+        with open(PROVIDER_SELECTION_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return str(data.get("selected_provider") or "").strip()
+    except FileNotFoundError:
+        return ""
+    except Exception as e:
+        print(f"[Warning] 读取上次 provider 选择失败，将使用默认值: {e}")
+    return ""
+
+
+def save_last_selected_provider(provider_name: str) -> None:
+    try:
+        with open(PROVIDER_SELECTION_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"selected_provider": str(provider_name or "").strip()}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Warning] 保存 provider 选择失败，不影响主流程: {e}")
+
+
+def choose_email_provider_interactively(provider_names: List[str]) -> str:
+    normalized = normalize_email_providers(provider_names)
+    last_selected_provider = load_last_selected_provider()
+    default_provider = last_selected_provider if last_selected_provider in normalized else normalized[0]
+
+    print("[*] 请选择本次使用的邮箱服务 provider:")
+    for index, provider_name in enumerate(normalized, start=1):
+        default_mark = " (默认)" if provider_name == default_provider else ""
+        print(f"    {index}. {provider_name}{default_mark}")
+
+    while True:
+        try:
+            default_index = normalized.index(default_provider) + 1
+            selected = input(f"请输入序号并回车（默认 {default_index} = {default_provider}）: ").strip()
+        except EOFError:
+            selected = ""
+
+        if not selected:
+            print(f"[*] 未输入，使用默认邮箱服务: {default_provider}")
+            save_last_selected_provider(default_provider)
+            return default_provider
+
+        if selected.isdigit():
+            selected_index = int(selected)
+            if 1 <= selected_index <= len(normalized):
+                chosen_provider = normalized[selected_index - 1]
+                print(f"[*] 已选择邮箱服务: {chosen_provider}")
+                save_last_selected_provider(chosen_provider)
+                return chosen_provider
+
+        print("[Warning] 输入无效，请输入列表中的序号。")
 
 
 def _b64url_no_pad(raw: bytes) -> str:
@@ -1752,6 +1807,7 @@ def register_until_target_count(
     provider: Optional[str],
     target_count: int,
     email_providers: Optional[List[str]] = None,
+    selected_provider: Optional[str] = None,
 ) -> int:
     if not base_url or not token:
         print("[*] 跳过补量：未配置 CLIProxyAPI 管理接口或 Token")
@@ -1781,6 +1837,10 @@ def register_until_target_count(
 
     print(f"[*] 删除401后数量不足，开始补充差额: {deficit}")
     provider_names = normalize_email_providers(email_providers)
+    active_provider = str(selected_provider or "").strip()
+    if active_provider and active_provider not in provider_names:
+        print(f"[Warning] 已选 provider 不在候选列表中，回退到默认列表: {active_provider}")
+        active_provider = ""
     success = 0
     attempt_count = 0
     total_start_time = time.time()
@@ -1789,9 +1849,10 @@ def register_until_target_count(
     while success < deficit:
         attempt_count += 1
         attempt_no = success + 1
-        provider_name = provider_names[(attempt_count - 1) % len(provider_names)]
+        provider_name = active_provider or provider_names[(attempt_count - 1) % len(provider_names)]
         attempt_start_time = time.time()
-        print(f"[*] 补量进度: {attempt_no}/{deficit}，第 {attempt_count} 次尝试，本次邮箱服务: {provider_name}")
+        mode_label = "已选" if active_provider else "轮换"
+        print(f"[*] 补量进度: {attempt_no}/{deficit}，第 {attempt_count} 次尝试，本次{mode_label}邮箱服务: {provider_name}")
         token_result = register_once(proxy, email_provider_name=provider_name)
         if not token_result:
             print("[-] 本次补量注册失败。")
@@ -1869,12 +1930,14 @@ def main() -> int:
     sleep_min = max(1, args.sleep_min)
     sleep_max = max(sleep_min, args.sleep_max)
     email_providers = normalize_email_providers([name.strip() for name in str(args.email_providers or "").split(",") if name.strip()])
+    selected_provider = choose_email_provider_interactively(email_providers)
 
     count = 0
     total_start_time = time.time()
     successful_durations: List[float] = []
     print("[Info] Hybrid OpenAI Auto-Registrar Started")
     print(f"[*] 当前邮箱服务顺序: {', '.join(email_providers)}")
+    print(f"[*] 本次已选择邮箱服务: {selected_provider}")
 
     if not args.skip_preclean_401:
         preclean_401_and_delete(
@@ -1898,6 +1961,7 @@ def main() -> int:
             provider=args.preclean_provider,
             target_count=args.target_account_count,
             email_providers=email_providers,
+            selected_provider=selected_provider,
         )
         return 0
 
@@ -1906,8 +1970,8 @@ def main() -> int:
         attempt_start_time = time.time()
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] >>> 开始第 {count} 次注册流程 <<<")
         print(f"[*] 当前已成功创建账号数: {len(successful_durations)}")
-        provider_name = email_providers[(count - 1) % len(email_providers)]
-        print(f"[*] 本次轮换邮箱服务: {provider_name}")
+        provider_name = selected_provider
+        print(f"[*] 本次选择邮箱服务: {provider_name}")
         token_result = register_once(args.proxy, email_provider_name=provider_name)
         if token_result:
             token_json = token_result["token_json"]
