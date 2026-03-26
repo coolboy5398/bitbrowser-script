@@ -21,6 +21,7 @@ from account_db import (
     init_account_db,
     is_email_suffix_disabled,
     upsert_account_record,
+    upsert_disabled_email_suffix,
 )
 from providers import EmailProviderFactory
 
@@ -55,6 +56,53 @@ def format_beijing_rfc3339(dt: datetime) -> str:
 
 def format_beijing_from_epoch(epoch_seconds: int) -> str:
     return datetime.fromtimestamp(epoch_seconds, tz=BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def extract_email_suffix(email: str) -> str:
+    email_text = str(email or "").strip().lower()
+    if "@" not in email_text:
+        return ""
+    return "@" + email_text.rsplit("@", 1)[1]
+
+
+def is_unsupported_email_error(error: Any) -> bool:
+    error_text = str(error or "").strip().lower()
+    if not error_text:
+        return False
+    return (
+        "unsupported_email" in error_text
+        or "unsupported email" in error_text
+        or "the email you provided is not supported" in error_text
+    )
+
+
+def disable_email_suffix_for_unsupported_email(
+    *,
+    subscription_type: str,
+    email: str,
+    error: Any,
+) -> bool:
+    if not is_unsupported_email_error(error):
+        return False
+
+    email_suffix = extract_email_suffix(email)
+    if not email_suffix:
+        return False
+
+    try:
+        upsert_disabled_email_suffix(
+            subscription_type=subscription_type,
+            email_suffix=email_suffix,
+            enabled=True,
+        )
+        print(
+            f"[*] 已自动禁用邮箱后缀: {email_suffix} "
+            f"(subscription_type={subscription_type}, reason=unsupported_email)"
+        )
+        return True
+    except Exception as save_error:
+        print(f"[Warning] 保存禁用邮箱后缀失败: {email_suffix}, error={save_error}")
+        return False
 
 
 def normalize_email_providers(email_providers: Optional[List[str]] = None) -> List[str]:
@@ -1749,7 +1797,7 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
                 continue
 
             candidate_email = str(email).strip()
-            email_suffix = candidate_email[candidate_email.rfind("@") :].lower() if "@" in candidate_email else ""
+            email_suffix = extract_email_suffix(candidate_email)
             if is_email_suffix_disabled("OpenAI", email_suffix):
                 print(
                     f"[Warning] 邮箱后缀已禁用，跳过: {candidate_email} "
@@ -1792,6 +1840,11 @@ def register_once(proxy: Optional[str], email_provider_name: Optional[str] = Non
             f"[Debug] register_once 失败上下文: provider={provider_name}, email={register_email}, "
             f"mail_access={mail_address}, device_id={registrar.device_id}, "
             f"auth_session_logging_id={registrar.auth_session_logging_id}"
+        )
+        disable_email_suffix_for_unsupported_email(
+            subscription_type="OpenAI",
+            email=register_email,
+            error=e,
         )
         print(f"[Error] 运行时发生错误: {e}")
         return None
