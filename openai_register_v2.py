@@ -1897,7 +1897,6 @@ def register_until_target_count(
     success = 0
     attempt_count = 0
     total_start_time = time.time()
-    successful_durations: List[float] = []
 
     while success < deficit:
         attempt_count += 1
@@ -1927,13 +1926,12 @@ def register_until_target_count(
             if upload_token_to_cliproxyapi(base_url, token, file_name, token_json):
                 success += 1
                 duration = time.time() - attempt_start_time
-                successful_durations.append(duration)
                 print(f"[*] 第 {success} 个账号创建成功，耗时: {duration:.2f} 秒")
         except Exception as ex:
             print(f"[-] 补量账号自动注入过程发生错误: {ex}")
 
     total_duration = time.time() - total_start_time
-    average_duration = (sum(successful_durations) / len(successful_durations)) if successful_durations else 0.0
+    average_duration = (total_duration / success) if success else 0.0
     print(f"[*] 补量完成，本次共补充 {success} 个账号。")
     print(f"[*] 总耗时: {total_duration:.2f} 秒")
     print(f"[*] 平均每个账号耗时: {average_duration:.2f} 秒")
@@ -1987,7 +1985,7 @@ def main() -> int:
 
     count = 0
     total_start_time = time.time()
-    successful_durations: List[float] = []
+    success_count = 0
     print("[Info] Hybrid OpenAI Auto-Registrar Started")
     print(f"[*] 当前邮箱服务顺序: {', '.join(email_providers)}")
     print(f"[*] 本次已选择邮箱服务: {selected_provider}")
@@ -2022,7 +2020,7 @@ def main() -> int:
         count += 1
         attempt_start_time = time.time()
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] >>> 开始第 {count} 次注册流程 <<<")
-        print(f"[*] 当前已成功创建账号数: {len(successful_durations)}")
+        print(f"[*] 当前已成功创建账号数: {success_count}")
         provider_name = selected_provider
         print(f"[*] 本次选择邮箱服务: {provider_name}")
         token_result = register_once(args.proxy, email_provider_name=provider_name)
@@ -2044,10 +2042,10 @@ def main() -> int:
                 except Exception as ex:
                     print(f"[-] 自动注入过程发生错误: {ex}")
             duration = time.time() - attempt_start_time
-            successful_durations.append(duration)
+            success_count += 1
             total_duration = time.time() - total_start_time
-            average_duration = sum(successful_durations) / len(successful_durations)
-            print(f"[*] 第 {len(successful_durations)} 个账号创建成功，耗时: {duration:.2f} 秒")
+            average_duration = total_duration / success_count
+            print(f"[*] 第 {success_count} 个账号创建成功，耗时: {duration:.2f} 秒")
             print(f"[*] 当前累计总耗时: {total_duration:.2f} 秒")
             print(f"[*] 当前平均每个账号耗时: {average_duration:.2f} 秒")
         else:
@@ -2060,10 +2058,10 @@ def main() -> int:
         time.sleep(wait_time)
 
     total_duration = time.time() - total_start_time
-    average_duration = (sum(successful_durations) / len(successful_durations)) if successful_durations else 0.0
+    average_duration = (total_duration / success_count) if success_count else 0.0
     print(f"[*] 所有流程结束，总耗时: {total_duration:.2f} 秒")
     print(f"[*] 平均每个账号耗时: {average_duration:.2f} 秒")
-    print(f"[*] 成功创建账号总数: {len(successful_durations)}")
+    print(f"[*] 成功创建账号总数: {success_count}")
     return 0
 
 
