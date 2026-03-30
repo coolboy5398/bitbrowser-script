@@ -40,7 +40,7 @@ DEFAULT_PRECHECK_TIMEOUT = 12
 DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
-DEFAULT_TARGET_ACCOUNT_COUNT = 120
+DEFAULT_TARGET_ACCOUNT_COUNT = 121
 DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol","chatgpt","chat-tempmail","do22","duckmail","mailtm"] #chatgpt,tempmail-lol,chat-tempmail,do22,domain-imap,duckmail,mailtm
 PROVIDER_SELECTION_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openai_register_v2_provider_state.json")
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -690,6 +690,7 @@ def fetch_sentinel_challenge(
     user_agent: Optional[str] = None,
     sec_ch_ua: Optional[str] = None,
     impersonate: Optional[str] = None,
+    debug: bool = False,
 ) -> Optional[Dict[str, Any]]:
     generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
     req_body = {
@@ -701,10 +702,15 @@ def fetch_sentinel_challenge(
         "Content-Type": "text/plain;charset=UTF-8",
         "Referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html",
         "Origin": "https://sentinel.openai.com",
-        "User-Agent": user_agent or "Mozilla/5.0",
-        "sec-ch-ua": sec_ch_ua or '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+        "User-Agent": user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "sec-ch-ua": sec_ch_ua or '"Chromium";v="145", "Not:A-Brand";v="99", "Google Chrome";v="145"',
+        "sec-ch-ua-arch": '"x86_64"',
+        "sec-ch-ua-bitness": '"64"',
+        "sec-ch-ua-full-version-list": '"Chromium";v="145.0.0.0", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.0.0"',
         "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-model": '""',
         "sec-ch-ua-platform": '"Windows"',
+        "sec-ch-ua-platform-version": '"10.0.0"',
     }
     kwargs: Dict[str, Any] = {
         "data": json.dumps(req_body),
@@ -715,9 +721,13 @@ def fetch_sentinel_challenge(
         kwargs["impersonate"] = impersonate
     try:
         resp = session.post("https://sentinel.openai.com/backend-api/sentinel/req", **kwargs)
-    except Exception:
+    except Exception as e:
+        if debug:
+            print(f"[Debug] fetch_sentinel_challenge 请求异常: {e}")
         return None
     if resp.status_code != 200:
+        if debug:
+            print(f"[Debug] fetch_sentinel_challenge 状态码: {resp.status_code}, body: {resp.text[:200]}")
         return None
     try:
         data = resp.json()
@@ -734,6 +744,7 @@ def build_sentinel_token(
     user_agent: Optional[str] = None,
     sec_ch_ua: Optional[str] = None,
     impersonate: Optional[str] = None,
+    debug: bool = False,
 ) -> Optional[str]:
     challenge = fetch_sentinel_challenge(
         session,
@@ -742,6 +753,7 @@ def build_sentinel_token(
         user_agent=user_agent,
         sec_ch_ua=sec_ch_ua,
         impersonate=impersonate,
+        debug=debug,
     )
     if not challenge:
         return None
@@ -1050,8 +1062,10 @@ class HybridOpenAIRegister:
         self.ua = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
+            "Chrome/145.0.0.0 Safari/537.36"
         )
+        self.sec_ch_ua = '"Chromium";v="145", "Not:A-Brand";v="99", "Google Chrome";v="145"'
+        self.impersonate = None
         self.session.headers.update({
             "User-Agent": self.ua,
             "Accept-Language": random.choice([
@@ -1059,9 +1073,15 @@ class HybridOpenAIRegister:
                 "en-US,en;q=0.9,zh-CN;q=0.8",
                 "en,en-US;q=0.9",
             ]),
-            "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "sec-ch-ua": self.sec_ch_ua,
+            "sec-ch-ua-arch": '"x86_64"',
+            "sec-ch-ua-bitness": '"64"',
+            "sec-ch-ua-full-version-list": '"Chromium";v="145.0.0.0", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.0.0"',
             "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-model": '""',
             "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-platform-version": '"10.0.0"',
+            "priority": "u=1, i",
         })
         self.session.cookies.set("oai-did", self.device_id, domain="chatgpt.com")
         self.session.cookies.set("oai-did", self.device_id, domain="auth.openai.com")
@@ -1073,10 +1093,11 @@ class HybridOpenAIRegister:
         token = build_sentinel_token(
             self.session,
             self.device_id,
-            flow="authorize_continue",
+            flow="create_account",
             user_agent=self.ua,
-            sec_ch_ua='"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            impersonate="chrome",
+            sec_ch_ua=self.sec_ch_ua,
+            impersonate=self.impersonate,
+            debug=True,
         )
         if not token:
             print("[Warning] create_account sentinel 缺少 token")
@@ -1184,6 +1205,7 @@ class HybridOpenAIRegister:
             "Accept": "application/json",
             "Referer": f"{AUTH_BASE}/create-account/password",
             "Origin": AUTH_BASE,
+            "priority": "u=1, i",
         }
         headers.update(_make_trace_headers())
         r = self.session.post(url, json={"username": email, "password": password}, headers=headers, timeout=20)
@@ -1214,8 +1236,19 @@ class HybridOpenAIRegister:
             "Accept": "application/json",
             "Referer": f"{AUTH_BASE}/email-verification",
             "Origin": AUTH_BASE,
+            "priority": "u=1, i",
         }
         headers.update(_make_trace_headers())
+        sentinel_token = build_sentinel_token(
+            self.session,
+            self.device_id,
+            flow="authorize_continue",
+            user_agent=self.ua,
+            sec_ch_ua=self.sec_ch_ua,
+            debug=False,
+        )
+        if sentinel_token:
+            headers["openai-sentinel-token"] = sentinel_token
         r = self.session.post(url, json={"code": code}, headers=headers, timeout=20)
         data = safe_json(r) or {"text": r.text[:500]}
         print(f"[*] 校验 OTP 状态: {r.status_code}")
@@ -1228,6 +1261,7 @@ class HybridOpenAIRegister:
             "Accept": "application/json",
             "Referer": f"{AUTH_BASE}/about-you",
             "Origin": AUTH_BASE,
+            "priority": "u=1, i",
         }
         headers.update(_make_trace_headers())
         sentinel_token = self._build_authorize_continue_sentinel()
@@ -1599,6 +1633,7 @@ class HybridOpenAIRegister:
                 "Referer": referer,
                 "User-Agent": self.ua,
                 "oai-device-id": self.device_id,
+                "priority": "u=1, i",
             }
             h.update(_make_trace_headers())
             return h
@@ -1610,8 +1645,9 @@ class HybridOpenAIRegister:
                 self.device_id,
                 flow=flow,
                 user_agent=self.ua,
-                sec_ch_ua='"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-                impersonate="chrome",
+                sec_ch_ua=self.sec_ch_ua,
+                impersonate=self.impersonate,
+                debug=True,
             )
             if sentinel_token:
                 merged["openai-sentinel-token"] = sentinel_token
