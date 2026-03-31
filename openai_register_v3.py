@@ -582,17 +582,37 @@ def _random_delay(low: float = 0.3, high: float = 1.0) -> None:
     time.sleep(random.uniform(low, high))
 
 
+class BrowserProfile:
+    def __init__(self):
+        # 兼容 curl_cffi 支持的 impersonate
+        versions = [
+            {"major": "116", "full": "116.0.0.0", "impersonate": "chrome116"},
+            {"major": "120", "full": "120.0.0.0", "impersonate": "chrome120"},
+            {"major": "124", "full": "124.0.0.0", "impersonate": "chrome124"},
+        ]
+        v = random.choice(versions)
+        self.impersonate = v["impersonate"]
+        self.ua = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v['full']} Safari/537.36"
+        self.sec_ch_ua = f'"Chromium";v="{v["major"]}", "Not:A-Brand";v="99", "Google Chrome";v="{v["major"]}"'
+        self.sec_ch_ua_full_version_list = f'"Chromium";v="{v["full"]}", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="{v["full"]}"'
+        self.hardware_concurrency = random.choice([4, 8, 12, 16])
+        self.screen_resolution = random.choice(["1366x768", "1920x1080", "1536x864", "1440x900", "2560x1440"])
+
+
+
 class SentinelTokenGenerator:
     MAX_ATTEMPTS = 500000
     ERROR_PREFIX = "wQ8Lk5FbGpA2NcR9dShT6gYjU7VxZ4D"
 
-    def __init__(self, device_id: Optional[str] = None, user_agent: Optional[str] = None):
+    def __init__(self, device_id: Optional[str] = None, user_agent: Optional[str] = None, screen_resolution: Optional[str] = None, hardware_concurrency: Optional[int] = None):
         self.device_id = device_id or str(uuid.uuid4())
         self.user_agent = user_agent or (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/145.0.0.0 Safari/537.36"
         )
+        self.screen_resolution = screen_resolution or "1920x1080"
+        self.hardware_concurrency = hardware_concurrency or random.choice([4, 8, 12, 16])
         self.requirements_seed = str(random.random())
         self.sid = str(uuid.uuid4())
 
@@ -627,7 +647,7 @@ class SentinelTokenGenerator:
         ])
         nav_val = f"{nav_prop}-undefined"
         return [
-            "1920x1080",
+            self.screen_resolution,
             now_str,
             4294705152,
             random.random(),
@@ -644,7 +664,7 @@ class SentinelTokenGenerator:
             perf_now,
             self.sid,
             "",
-            random.choice([4, 8, 12, 16]),
+            self.hardware_concurrency,
             time_origin,
         ]
 
@@ -687,12 +707,25 @@ def fetch_sentinel_challenge(
     device_id: str,
     *,
     flow: str = "authorize_continue",
+    profile: Optional['BrowserProfile'] = None,
     user_agent: Optional[str] = None,
     sec_ch_ua: Optional[str] = None,
     impersonate: Optional[str] = None,
     debug: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
+    ua = profile.ua if profile else (user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+    sua = profile.sec_ch_ua if profile else (sec_ch_ua or '"Chromium";v="145", "Not:A-Brand";v="99", "Google Chrome";v="145"')
+    sua_full = profile.sec_ch_ua_full_version_list if profile else '"Chromium";v="145.0.0.0", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.0.0"'
+    res = profile.screen_resolution if profile else "1920x1080"
+    hc = profile.hardware_concurrency if profile else random.choice([4, 8, 12, 16])
+    imp = profile.impersonate if profile else impersonate
+
+    generator = SentinelTokenGenerator(
+        device_id=device_id, 
+        user_agent=ua,
+        screen_resolution=res,
+        hardware_concurrency=hc
+    )
     req_body = {
         "p": generator.generate_requirements_token(),
         "id": device_id,
@@ -702,11 +735,11 @@ def fetch_sentinel_challenge(
         "Content-Type": "text/plain;charset=UTF-8",
         "Referer": "https://sentinel.openai.com/backend-api/sentinel/frame.html",
         "Origin": "https://sentinel.openai.com",
-        "User-Agent": user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-        "sec-ch-ua": sec_ch_ua or '"Chromium";v="145", "Not:A-Brand";v="99", "Google Chrome";v="145"',
+        "User-Agent": ua,
+        "sec-ch-ua": sua,
         "sec-ch-ua-arch": '"x86_64"',
         "sec-ch-ua-bitness": '"64"',
-        "sec-ch-ua-full-version-list": '"Chromium";v="145.0.0.0", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.0.0"',
+        "sec-ch-ua-full-version-list": sua_full,
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-model": '""',
         "sec-ch-ua-platform": '"Windows"',
@@ -717,8 +750,8 @@ def fetch_sentinel_challenge(
         "headers": headers,
         "timeout": 20,
     }
-    if impersonate:
-        kwargs["impersonate"] = impersonate
+    if imp:
+        kwargs["impersonate"] = imp
     try:
         resp = session.post("https://sentinel.openai.com/backend-api/sentinel/req", **kwargs)
     except Exception as e:
@@ -741,6 +774,7 @@ def build_sentinel_token(
     device_id: str,
     *,
     flow: str = "authorize_continue",
+    profile: Optional['BrowserProfile'] = None,
     user_agent: Optional[str] = None,
     sec_ch_ua: Optional[str] = None,
     impersonate: Optional[str] = None,
@@ -750,6 +784,7 @@ def build_sentinel_token(
         session,
         device_id,
         flow=flow,
+        profile=profile,
         user_agent=user_agent,
         sec_ch_ua=sec_ch_ua,
         impersonate=impersonate,
@@ -761,7 +796,16 @@ def build_sentinel_token(
     if not c_value:
         return None
     pow_data = challenge.get("proofofwork") or {}
-    generator = SentinelTokenGenerator(device_id=device_id, user_agent=user_agent)
+    
+    ua = profile.ua if profile else (user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+    res = profile.screen_resolution if profile else "1920x1080"
+    hc = profile.hardware_concurrency if profile else random.choice([4, 8, 12, 16])
+    generator = SentinelTokenGenerator(
+        device_id=device_id, 
+        user_agent=ua,
+        screen_resolution=res,
+        hardware_concurrency=hc
+    )
     if isinstance(pow_data, dict) and pow_data.get("required") and pow_data.get("seed"):
         p_value = generator.generate_token(
             seed=str(pow_data.get("seed") or ""),
@@ -1056,16 +1100,13 @@ class HybridOpenAIRegister:
         if proxy:
             self.proxies = {"http": proxy, "https": proxy}
 
-        self.session = requests.Session(proxies=self.proxies, impersonate="chrome")
+        self.profile = BrowserProfile()
+        self.session = requests.Session(proxies=self.proxies, impersonate=self.profile.impersonate)
         self.device_id = str(uuid.uuid4())
         self.auth_session_logging_id = str(uuid.uuid4())
-        self.ua = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/145.0.0.0 Safari/537.36"
-        )
-        self.sec_ch_ua = '"Chromium";v="145", "Not:A-Brand";v="99", "Google Chrome";v="145"'
-        self.impersonate = None
+        self.ua = self.profile.ua
+        self.sec_ch_ua = self.profile.sec_ch_ua
+        self.impersonate = self.profile.impersonate
         self.session.headers.update({
             "User-Agent": self.ua,
             "Accept-Language": random.choice([
@@ -1076,7 +1117,7 @@ class HybridOpenAIRegister:
             "sec-ch-ua": self.sec_ch_ua,
             "sec-ch-ua-arch": '"x86_64"',
             "sec-ch-ua-bitness": '"64"',
-            "sec-ch-ua-full-version-list": '"Chromium";v="145.0.0.0", "Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.0.0"',
+            "sec-ch-ua-full-version-list": self.profile.sec_ch_ua_full_version_list,
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-model": '""',
             "sec-ch-ua-platform": '"Windows"',
@@ -1094,9 +1135,7 @@ class HybridOpenAIRegister:
             self.session,
             self.device_id,
             flow="create_account",
-            user_agent=self.ua,
-            sec_ch_ua=self.sec_ch_ua,
-            impersonate=self.impersonate,
+            profile=self.profile,
             debug=True,
         )
         if not token:
@@ -1243,8 +1282,7 @@ class HybridOpenAIRegister:
             self.session,
             self.device_id,
             flow="authorize_continue",
-            user_agent=self.ua,
-            sec_ch_ua=self.sec_ch_ua,
+            profile=self.profile,
             debug=False,
         )
         if sentinel_token:
