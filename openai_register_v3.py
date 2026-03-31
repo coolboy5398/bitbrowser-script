@@ -40,7 +40,7 @@ DEFAULT_PRECHECK_TIMEOUT = 12
 DEFAULT_PRECHECK_WORKERS = 120
 DEFAULT_PRECHECK_RETRIES = 1
 DEFAULT_PRECHECK_OUTPUT_401 = "invalid_codex_accounts.json"
-DEFAULT_TARGET_ACCOUNT_COUNT = 121
+DEFAULT_TARGET_ACCOUNT_COUNT = 120
 DEFAULT_EMAIL_PROVIDERS = ["tempmail-lol","chatgpt","chat-tempmail","do22","duckmail","mailtm"] #chatgpt,tempmail-lol,chat-tempmail,do22,domain-imap,duckmail,mailtm
 PROVIDER_SELECTION_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openai_register_v2_provider_state.json")
 BEIJING_TZ = timezone(timedelta(hours=8))
