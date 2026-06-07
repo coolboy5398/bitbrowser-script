@@ -13,7 +13,7 @@ try:
 except Exception:
     aiohttp = None
 
-DEFAULT_BASE_URL = "http://127.0.0.1:8045"
+DEFAULT_BASE_URL = "http://152.136.226.46:10291"
 DEFAULT_UA = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
 DEFAULT_TIMEOUT = 12
 DEFAULT_CONFIG_PATH = "config.json"
