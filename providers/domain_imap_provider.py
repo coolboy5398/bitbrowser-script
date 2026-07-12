@@ -15,6 +15,8 @@ import time
 import random
 import string
 import re
+import os
+import json
 from email.header import decode_header
 from email.utils import parseaddr
 
@@ -30,37 +32,51 @@ class DomainIMAPProvider(EmailProvider):
     - 支持HTML和纯文本邮件解析
     """
     
-    # 可用域名列表（硬编码）
+    # 默认可用域名（可被 suffixes_file 覆盖）
     AVAILABLE_DOMAINS = [
-        # "xuanmu000001.xyz"
-        "dzhai.online"
+        "dzhai.online",
     ]
     
-    def __init__(self, imap_config: dict = None):
+    def __init__(self, imap_config: dict = None, suffixes_file: str = ""):
         """初始化域名IMAP服务
         
         Args:
-            imap_config: IMAP配置字典，包含host, port, user, password
-                        如果不提供则使用默认配置
+            imap_config: IMAP配置字典，包含 host, port, user, password
+            suffixes_file: email_suffixes.json 路径，用于读取 @domain 列表
         """
-        # 使用提供的配置或默认配置
-        if imap_config:
-            self.imap_host = imap_config.get('host', 'imap.qq.com')
-            self.imap_port = imap_config.get('port', 993)
-            self.imap_user = imap_config.get('user', '276326143@qq.com')
-            self.imap_password = imap_config.get('password', 'pobdbnrumwetbjgd')
-        else:
-            # 默认QQ邮箱配置
-            self.imap_host = 'imap.qq.com'
-            self.imap_port = 993
-            self.imap_user = '276326143@qq.com'
-            self.imap_password = 'pobdbnrumwetbjgd'
+        imap_config = imap_config or {}
+        self.imap_host = imap_config.get("host", "imap.qq.com")
+        self.imap_port = int(imap_config.get("port", 993) or 993)
+        self.imap_user = str(imap_config.get("user", "") or "").strip()
+        self.imap_password = str(imap_config.get("password", "") or "").strip()
+        
+        self.available_domains = self._load_domains(suffixes_file)
         
         # 缓存生成的邮箱地址
         self.generated_email = None
         
         # IMAP连接对象
         self.imap_connection = None
+
+    def _load_domains(self, suffixes_file: str) -> list:
+        """从 email_suffixes.json 或默认列表加载域名。"""
+        if suffixes_file and os.path.isfile(suffixes_file):
+            try:
+                with open(suffixes_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                suffixes = data.get("suffixes", [])
+                domains = []
+                for item in suffixes:
+                    text = str(item or "").strip()
+                    if text.startswith("@"):
+                        text = text[1:]
+                    if text:
+                        domains.append(text)
+                if domains:
+                    return domains
+            except Exception as exc:
+                print(f"   ⚠️  读取后缀文件失败: {exc}")
+        return list(self.AVAILABLE_DOMAINS)
     
     def needs_browser_page(self) -> bool:
         """不需要打开浏览器页面,直接通过IMAP接收"""
@@ -72,7 +88,7 @@ class DomainIMAPProvider(EmailProvider):
     
     def get_domain_patterns(self) -> list:
         """获取域名匹配模式"""
-        return self.AVAILABLE_DOMAINS
+        return self.available_domains
 
     def get_mail_access_identifier(self) -> str:
         """获取取邮件标识"""
@@ -102,7 +118,7 @@ class DomainIMAPProvider(EmailProvider):
         Returns:
             str: 域名
         """
-        return random.choice(self.AVAILABLE_DOMAINS)
+        return random.choice(self.available_domains)
     
     def get_email_from_page(self, cdp, session_id) -> str:
         """从网页提取邮箱地址

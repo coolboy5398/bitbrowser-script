@@ -1,0 +1,18 @@
+{
+  "email_provider": "domain-imap",
+  "proxy": "http://127.0.0.1:7890",
+  "register_count": 1,
+  "enable_nsfw": true,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+  "imap_host": "imap.qq.com",
+  "imap_port": 993,
+  "imap_user": "",
+  "imap_password": "",
+  "email_suffixes_file": "../email_suffixes.json",
+  "duckmail_api_key": "",
+  "chat_tempmail_api_key": "",
+  "cpa_auto_add": false,
+  "cpa_auth_dir": "",
+  "cpa_remote_url": "",
+  "cpa_management_key": ""
+}

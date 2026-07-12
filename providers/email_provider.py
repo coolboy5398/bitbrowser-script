@@ -306,3 +306,37 @@ class EmailProvider(ABC):
         print("   ⚠️  未能从邮件内容中提取OpenAI验证码")
         return None
 
+    def parse_xai_code(self, email_content: dict) -> str:
+        """从 xAI/Grok 邮件提取验证码（格式 ABC-123 或数字码）。"""
+        if not email_content:
+            return None
+
+        subject = email_content.get("subject", "")
+        content = email_content.get("content", "")
+        html = email_content.get("html", "")
+        full_content = f"{subject}\n{content}\n{html}"
+        full_lower = full_content.lower()
+
+        if "x.ai" not in full_lower and "xai" not in full_lower and "grok" not in full_lower:
+            print("   ⚠️  不是 xAI/Grok 邮件")
+            return None
+
+        print("   ✓ 识别为 xAI/Grok 邮件")
+
+        patterns = [
+            r"^([A-Z0-9]{3}-[A-Z0-9]{3})\s+xAI",
+            r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b",
+            r"verification\s+code[:\s]+(\d{4,8})",
+            r"your\s+code[:\s]+(\d{4,8})",
+            r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, full_content, re.IGNORECASE | re.MULTILINE)
+            if match:
+                code = match.group(1)
+                print(f"   ✓ 找到 xAI 验证码: {code}")
+                return code
+
+        print("   ⚠️  未能从邮件内容中提取 xAI 验证码")
+        return None
+
