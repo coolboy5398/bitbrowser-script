@@ -41,13 +41,23 @@ import email_bridge
 
 MEMORY_CLEANUP_INTERVAL = 5
 
-UI_BG = "#242424"
-UI_PANEL_BG = "#2b2b2b"
-UI_FG = "#f2f2f2"
-UI_MUTED_FG = "#b8b8b8"
-UI_ENTRY_BG = "#333333"
-UI_BUTTON_BG = "#3a3a3a"
-UI_ACTIVE_BG = "#4a6078"
+UI_BG = "#F5F6F8"
+UI_PANEL_BG = "#FFFFFF"
+UI_FG = "#1F2937"
+UI_MUTED_FG = "#6B7280"
+UI_ENTRY_BG = "#FFFFFF"
+UI_BUTTON_BG = "#E5E7EB"
+UI_ACTIVE_BG = "#3B82F6"
+UI_BORDER = "#D1D5DB"
+UI_DISABLED_BG = "#F3F4F6"
+UI_DISABLED_FG = "#9CA3AF"
+UI_SELECT_FG = "#FFFFFF"
+UI_STATUS_READY = "#15803D"
+UI_STATUS_RUNNING = "#2563EB"
+UI_CHECK_SELECT = "#DBEAFE"
+UI_LOG_BG = "#FFFFFF"
+UI_LOG_FG = "#1F2937"
+UI_LOG_SELECT_BG = "#BFDBFE"
 
 
 class RegistrationCancelled(Exception):
@@ -464,10 +474,10 @@ def setup_light_theme(root):
         root.option_add("*Background", UI_BG)
         root.option_add("*Foreground", UI_FG)
         root.option_add("*selectBackground", UI_ACTIVE_BG)
-        root.option_add("*selectForeground", UI_FG)
+        root.option_add("*selectForeground", UI_SELECT_FG)
         root.option_add("*insertBackground", UI_FG)
         root.option_add("*Entry.Background", UI_ENTRY_BG)
-        root.option_add("*Text.Background", UI_ENTRY_BG)
+        root.option_add("*Text.Background", UI_LOG_BG)
         root.option_add("*Menu.Background", UI_ENTRY_BG)
         root.option_add("*Menu.Foreground", UI_FG)
         style = ttk.Style(root)
@@ -487,6 +497,11 @@ def setup_light_theme(root):
         style.configure("TEntry", fieldbackground=UI_ENTRY_BG, foreground=UI_FG)
         style.configure("TCombobox", fieldbackground=UI_ENTRY_BG, foreground=UI_FG)
         style.configure("TSpinbox", fieldbackground=UI_ENTRY_BG, foreground=UI_FG)
+        style.map(
+            "TButton",
+            background=[("active", UI_ACTIVE_BG), ("disabled", UI_DISABLED_BG)],
+            foreground=[("active", UI_SELECT_FG), ("disabled", UI_DISABLED_FG)],
+        )
     except Exception:
         pass
 
@@ -503,10 +518,11 @@ def tk_entry(parent, textvariable=None, width=30, **kwargs):
         bg=UI_ENTRY_BG,
         fg=UI_FG,
         insertbackground=UI_FG,
-        disabledbackground="#2f2f2f",
-        disabledforeground=UI_MUTED_FG,
+        disabledbackground=UI_DISABLED_BG,
+        disabledforeground=UI_DISABLED_FG,
         highlightthickness=1,
-        highlightbackground="#555555",
+        highlightbackground=UI_BORDER,
+        highlightcolor=UI_ACTIVE_BG,
         relief=tk.SOLID,
         **kwargs,
     )
@@ -521,8 +537,8 @@ def tk_button(parent, text="", command=None, state=tk.NORMAL, **kwargs):
         bg=UI_BUTTON_BG,
         fg=UI_FG,
         activebackground=UI_ACTIVE_BG,
-        activeforeground=UI_FG,
-        disabledforeground="#777777",
+        activeforeground=UI_SELECT_FG,
+        disabledforeground=UI_DISABLED_FG,
         relief=tk.RAISED,
         padx=10,
         pady=3,
@@ -535,11 +551,11 @@ def tk_checkbutton(parent, text="", variable=None, **kwargs):
         parent,
         text=text,
         variable=variable,
-        bg=UI_BG,
+        bg=UI_PANEL_BG,
         fg=UI_FG,
-        activebackground=UI_BG,
+        activebackground=UI_PANEL_BG,
         activeforeground=UI_FG,
-        selectcolor="#3d7be0",
+        selectcolor=UI_CHECK_SELECT,
         **kwargs,
     )
 
@@ -551,12 +567,18 @@ def tk_option_menu(parent, variable, values, width=12):
         bg=UI_ENTRY_BG,
         fg=UI_FG,
         activebackground=UI_ACTIVE_BG,
-        activeforeground=UI_FG,
+        activeforeground=UI_SELECT_FG,
         highlightthickness=1,
-        highlightbackground="#555555",
+        highlightbackground=UI_BORDER,
+        highlightcolor=UI_ACTIVE_BG,
         relief=tk.SOLID,
     )
-    menu["menu"].configure(bg=UI_ENTRY_BG, fg=UI_FG, activebackground=UI_ACTIVE_BG, activeforeground=UI_FG)
+    menu["menu"].configure(
+        bg=UI_ENTRY_BG,
+        fg=UI_FG,
+        activebackground=UI_ACTIVE_BG,
+        activeforeground=UI_SELECT_FG,
+    )
     return menu
 
 
@@ -1835,8 +1857,10 @@ class GrokRegisterGUI:
             fg=UI_FG,
             insertbackground=UI_FG,
             buttonbackground=UI_BUTTON_BG,
-            disabledbackground="#2f2f2f",
-            disabledforeground=UI_MUTED_FG,
+            disabledbackground=UI_DISABLED_BG,
+            disabledforeground=UI_DISABLED_FG,
+            highlightthickness=1,
+            highlightbackground=UI_BORDER,
             relief=tk.SOLID,
         )
         add_field(self.count_spinbox, 0, 3, sticky=tk.W)
@@ -1909,7 +1933,9 @@ class GrokRegisterGUI:
         status_frame.grid(row=2, column=0, sticky=tk.EW, pady=(0, 6))
         self.status_var = tk.StringVar(value="就绪")
         tk_label(status_frame, text="状态: ").pack(side=tk.LEFT)
-        self.status_label = tk.Label(status_frame, textvariable=self.status_var, bg=UI_BG, fg="green")
+        self.status_label = tk.Label(
+            status_frame, textvariable=self.status_var, bg=UI_BG, fg=UI_STATUS_READY
+        )
         self.status_label.pack(side=tk.LEFT)
         self.stats_var = tk.StringVar(value="成功: 0 | 失败: 0")
         tk.Label(status_frame, textvariable=self.stats_var, bg=UI_BG, fg=UI_FG).pack(side=tk.RIGHT)
@@ -1930,15 +1956,15 @@ class GrokRegisterGUI:
             log_frame,
             height=18,
             width=60,
-            bg="#111111",
-            fg="#f5f5f5",
-            insertbackground="#f5f5f5",
-            selectbackground="#345a8a",
-            selectforeground="#ffffff",
+            bg=UI_LOG_BG,
+            fg=UI_LOG_FG,
+            insertbackground=UI_LOG_FG,
+            selectbackground=UI_LOG_SELECT_BG,
+            selectforeground=UI_FG,
             relief=tk.SOLID,
             borderwidth=1,
             highlightthickness=1,
-            highlightbackground="#555555",
+            highlightbackground=UI_BORDER,
         )
         self.log_text.grid(row=0, column=0, sticky=tk.NSEW)
         self.log("[*] GUI 已就绪，配置已加载")
@@ -1962,7 +1988,9 @@ class GrokRegisterGUI:
         self.start_btn.config(state=tk.DISABLED if running else tk.NORMAL)
         self.stop_btn.config(state=tk.NORMAL if running else tk.DISABLED)
         self.status_var.set("运行中..." if running else "就绪")
-        self.status_label.config(foreground="blue" if running else "green")
+        self.status_label.config(
+            foreground=UI_STATUS_RUNNING if running else UI_STATUS_READY
+        )
 
     def should_stop(self):
         return self.stop_requested or not self.is_running
