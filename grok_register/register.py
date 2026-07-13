@@ -182,11 +182,43 @@ def add_sso_to_cpa(raw_token, email="", log_callback=None):
             log_callback(f"[CPA] {str(message).strip()}")
 
     try:
-        _cpa_log("SSO → device-flow 换 token ...")
-        token = _cpa.sso_to_token(sso, proxy=proxy, log=_cpa_log)
+        prefer_pkce = bool(config.get("cpa_prefer_pkce", True))
+        probe_after = bool(config.get("cpa_probe_after_write", True))
+        probe_chat = bool(config.get("cpa_probe_chat", True))
+        probe_required = bool(config.get("cpa_probe_required", False))
+
+        mint_label = "PKCE → device-flow" if prefer_pkce else "device-flow"
+        _cpa_log(f"SSO → {mint_label} 换 token ...")
+        token = _cpa.sso_to_token_with_fallback(
+            sso,
+            proxy=proxy,
+            log=_cpa_log,
+            email=email,
+            prefer_pkce=prefer_pkce,
+        )
         if not token:
-            _cpa_log("device-flow 换 token 失败，跳过")
+            _cpa_log("换 token 失败，跳过")
             return
+
+        mint_method = token.get("mint_method") or ("pkce" if prefer_pkce else "device")
+        _cpa_log(f"mint_method={mint_method}")
+
+        if probe_after:
+            access = token.get("access_token") or token.get("key") or ""
+            if access:
+                probe_ok = _cpa.probe_cpa_token(
+                    access,
+                    proxy=proxy,
+                    probe_chat=probe_chat,
+                    log=_cpa_log,
+                )
+                if not probe_ok:
+                    _cpa_log("probe 未通过（grok-4.5 不可用）")
+                    if probe_required:
+                        return
+                else:
+                    _cpa_log("probe 通过")
+
         record = _cpa.token_to_cpa_record(token, email=email)
         if auth_dir:
             try:

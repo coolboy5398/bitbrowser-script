@@ -29,6 +29,10 @@ DEFAULT_CONFIG = {
     "cpa_auth_dir": "",
     "cpa_remote_url": "",
     "cpa_management_key": "",
+    "cpa_prefer_pkce": True,
+    "cpa_probe_after_write": True,
+    "cpa_probe_chat": True,
+    "cpa_probe_required": False,
 }
 
 config = DEFAULT_CONFIG.copy()

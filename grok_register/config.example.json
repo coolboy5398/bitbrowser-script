@@ -14,5 +14,9 @@
   "cpa_auto_add": false,
   "cpa_auth_dir": "",
   "cpa_remote_url": "",
-  "cpa_management_key": ""
+  "cpa_management_key": "",
+  "cpa_prefer_pkce": true,
+  "cpa_probe_after_write": true,
+  "cpa_probe_chat": true,
+  "cpa_probe_required": false
 }

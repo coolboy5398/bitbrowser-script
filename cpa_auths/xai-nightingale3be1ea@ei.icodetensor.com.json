@@ -1,0 +1,22 @@
+{
+  "type": "xai",
+  "auth_kind": "oauth",
+  "email": "nightingale3be1ea@ei.icodetensor.com",
+  "sub": "9d8d38ea-7f23-4012-9ff3-9f190bf976c0",
+  "access_token": "eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJFUzI1NiIsImtpZCI6Im9hdXRoMi1wcm9kdWN0aW9uLTIwMjYtMDItMTkifQ.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsInN1YiI6IjlkOGQzOGVhLTdmMjMtNDAxMi05ZmYzLTlmMTkwYmY5NzZjMCIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsImV4cCI6MTc4Mzk0NjA5NCwiaWF0IjoxNzgzOTI0NDk0LCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIG9mZmxpbmVfYWNjZXNzIGdyb2stY2xpOmFjY2VzcyBhcGk6YWNjZXNzIGNvbnZlcnNhdGlvbnM6cmVhZCBjb252ZXJzYXRpb25zOndyaXRlIiwicHJpbmNpcGFsX3R5cGUiOiJVc2VyIiwicHJpbmNpcGFsX2lkIjoiOWQ4ZDM4ZWEtN2YyMy00MDEyLTlmZjMtOWYxOTBiZjk3NmMwIiwiY2xpZW50X2lkIjoiYjFhMDA0OTItMDczYS00N2VhLTgxNmYtNGMzMjkyNjRhODI4IiwianRpIjoiYmI4NGUxMDctZjBiMS00MWZmLTljOWEtMzMwZjFlZjY0YjBhIiwidGVhbV9pZCI6IjRjZWFlNGZkLTliOTAtNDIzMC1iNWZjLWJhMzRhZjJjMWIyNCJ9.s8cmEH7x8H_PWSn1HtCovXR7v0_Rxc9PSal7GkBiJVdUxy2cGSQ4ADdn5ar3Vev4LmKRhxqTfBtiwpPu_mUJvw",
+  "refresh_token": "8Nc6sRJ8G8hN1YHgkr8jXxDinlPPtsPzpCYamfHU6Lmr0gTvSun61q9yB2003_mQzBlkBmFXUVb9FhVuJTV5bw",
+  "id_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6Im9hdXRoMi1wcm9kdWN0aW9uLTIwMjYtMDItMTkifQ.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsInN1YiI6IjlkOGQzOGVhLTdmMjMtNDAxMi05ZmYzLTlmMTkwYmY5NzZjMCIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsImV4cCI6MTc4Mzk0NjA5NCwiaWF0IjoxNzgzOTI0NDk0LCJub25jZSI6ImQwZjZlZjI0NmZhOTQ0MzU4NzUxNzIyMGQ0NWVhNDM4IiwiZ2l2ZW5fbmFtZSI6IlZpY3RvciIsImZhbWlseV9uYW1lIjoiSG91IiwiZW1haWwiOiJuaWdodGluZ2FsZTNiZTFlYUBlaS5pY29kZXRlbnNvci5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZX0.Ld8fcXEVD8uMw9NbmlKpHBe1rt7Zg0CgzlJTXiCufIXWM41Eks8KhjHoUxVHEv2VxlZOMpsdoii0z3uU6rVszw",
+  "token_type": "Bearer",
+  "expires_in": 21600,
+  "expired": "2026-07-13T12:34:54Z",
+  "last_refresh": "2026-07-13T06:34:59Z",
+  "redirect_uri": "http://127.0.0.1:56121/callback",
+  "token_endpoint": "https://auth.x.ai/oauth2/token",
+  "base_url": "https://cli-chat-proxy.grok.com/v1",
+  "disabled": false,
+  "headers": {
+    "X-XAI-Token-Auth": "xai-grok-cli",
+    "x-grok-client-version": "0.2.93",
+    "x-grok-client-identifier": "grok-shell"
+  }
+}
