@@ -12,3 +12,4 @@ config/accounts.json
 config.json
 accounts_*.txt
 mail_credentials.txt
+cpa_auths/
