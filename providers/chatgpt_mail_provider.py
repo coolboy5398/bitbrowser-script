@@ -34,7 +34,7 @@ class ChatGPTMailProvider(EmailProvider):
 
     def __init__(
         self,
-        api_key: str = "gpt-test",
+        api_key: str = "sk-51c0KH4dfo1l",
         # api_key: str = "sk-57pxXsUy7hhJ",
         proxies: Any = None,
         timeout: int = 15,
@@ -44,7 +44,7 @@ class ChatGPTMailProvider(EmailProvider):
         """初始化 ChatGPTMail 服务
 
         Args:
-            api_key: API 密钥，不提供时默认使用官方公开测试密钥 `gpt-test`
+            api_key: API 密钥，不提供时默认使用官方公开测试密钥 `sk-51c0KH4dfo1l`
             proxies: 代理配置，兼容 [`EmailProviderFactory.create()`](providers/email_provider_factory.py:63)
             timeout: HTTP 请求超时时间（秒）
             prefix: 可选的邮箱前缀，提供后将改用 POST 方式生成邮箱
@@ -53,7 +53,7 @@ class ChatGPTMailProvider(EmailProvider):
         self.base_url = "https://mail.chatgpt.org.uk"
         self.api_base_url = f"{self.base_url}/api"
         self.api_url = f"{self.api_base_url}/emails"
-        self.api_key = (api_key or "gpt-test").strip()
+        self.api_key = (api_key or "sk-51c0KH4dfo1l").strip()
         self.proxies = proxies
         self.timeout = max(1, int(timeout or self.DEFAULT_TIMEOUT))
         self.prefix = (prefix or "").strip()
