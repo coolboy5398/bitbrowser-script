@@ -6,7 +6,7 @@ Grok 注册机 - TTK GUI 版本
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, filedialog
 import threading
 import datetime
 import time
@@ -234,6 +234,171 @@ def add_sso_to_cpa(raw_token, email="", log_callback=None):
                 _cpa_log(f"远程上传失败: {remote_exc}")
     except Exception as exc:
         _cpa_log(f"直出失败: {exc}")
+
+
+def parse_sso_lines(text):
+    """解析 SSO 列表文本。
+
+    支持：
+      - JSON 数组: ["eyJ...", "eyJ..."]
+      - 每行一个纯 sso / sso=...
+      - 每行 邮箱----密码----sso
+      - # 开头注释行
+
+    返回: list[{"email": str, "sso": str}]
+    """
+    items = []
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return items
+
+    # 优先尝试 JSON 数组 / 单字符串
+    if raw_text[0] in ("[", "{", '"'):
+        try:
+            data = json.loads(raw_text)
+        except Exception:
+            data = None
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, str):
+                    sso = _normalize_sso_token(entry)
+                    if sso:
+                        items.append({"email": "", "sso": sso})
+                elif isinstance(entry, dict):
+                    sso = _normalize_sso_token(
+                        entry.get("sso")
+                        or entry.get("token")
+                        or entry.get("cookie")
+                        or ""
+                    )
+                    email = str(entry.get("email") or "").strip()
+                    if sso:
+                        items.append({"email": email, "sso": sso})
+            if items:
+                return items
+        elif isinstance(data, str):
+            sso = _normalize_sso_token(data)
+            if sso:
+                return [{"email": "", "sso": sso}]
+
+    for raw in raw_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        # 去掉常见 JSON 数组残留：行首/行尾逗号、引号
+        line = line.strip().rstrip(",").strip()
+        if (line.startswith('"') and line.endswith('"')) or (
+            line.startswith("'") and line.endswith("'")
+        ):
+            line = line[1:-1].strip()
+        if line in ("[", "]", ",", "{},"):
+            continue
+        email = ""
+        sso = line
+        if "----" in line:
+            parts = [p.strip() for p in line.split("----")]
+            if parts and "@" in parts[0]:
+                email = parts[0]
+            sso = parts[-1] if parts else ""
+        sso = _normalize_sso_token(sso)
+        if not sso:
+            continue
+        items.append({"email": email, "sso": sso})
+    return items
+
+
+def upload_sso_item_to_cpa(raw_token, email="", log_callback=None, require_target=True):
+    """单条 SSO → CPA（手动批量上传用，不依赖 cpa_auto_add）。
+
+    返回: (ok: bool, message: str)
+    """
+    auth_dir = str(config.get("cpa_auth_dir", "") or "").strip()
+    remote_url = str(config.get("cpa_remote_url", "") or "").strip()
+    management_key = str(config.get("cpa_management_key", "") or "").strip()
+    if remote_url and not management_key:
+        if log_callback:
+            log_callback("[CPA上传] 已配置 cpa_remote_url 但未配置 cpa_management_key，跳过远程")
+        remote_url = ""
+    if not auth_dir and not remote_url:
+        msg = "未配置 cpa_auth_dir 或 (cpa_remote_url + cpa_management_key)"
+        if require_target and log_callback:
+            log_callback(f"[CPA上传] {msg}")
+        return False, msg
+
+    sso = _normalize_sso_token(raw_token)
+    if not sso:
+        return False, "SSO 为空"
+
+    proxy = str(config.get("proxy", "") or "").strip()
+
+    def _cpa_log(message):
+        if log_callback:
+            log_callback(f"[CPA上传] {str(message).strip()}")
+
+    try:
+        prefer_pkce = bool(config.get("cpa_prefer_pkce", True))
+        probe_after = bool(config.get("cpa_probe_after_write", True))
+        probe_chat = bool(config.get("cpa_probe_chat", True))
+        probe_required = bool(config.get("cpa_probe_required", False))
+
+        mint_label = "PKCE → device-flow" if prefer_pkce else "device-flow"
+        _cpa_log(f"SSO → {mint_label} 换 token ...")
+        token = _cpa.sso_to_token_with_fallback(
+            sso,
+            proxy=proxy,
+            log=_cpa_log,
+            email=email,
+            prefer_pkce=prefer_pkce,
+        )
+        if not token:
+            return False, "换 token 失败"
+
+        mint_method = token.get("mint_method") or ("pkce" if prefer_pkce else "device")
+        _cpa_log(f"mint_method={mint_method}")
+
+        if probe_after:
+            access = token.get("access_token") or token.get("key") or ""
+            if access:
+                probe_ok = _cpa.probe_cpa_token(
+                    access,
+                    proxy=proxy,
+                    probe_chat=probe_chat,
+                    log=_cpa_log,
+                )
+                if not probe_ok:
+                    _cpa_log("probe 未通过（grok-4.5 不可用）")
+                    if probe_required:
+                        return False, "probe 未通过"
+                else:
+                    _cpa_log("probe 通过")
+
+        record = _cpa.token_to_cpa_record(token, email=email)
+        wrote_any = False
+        errors = []
+        if auth_dir:
+            try:
+                path = _cpa.write_cpa_auth(_cpa.Path(auth_dir), record)
+                _cpa_log(f"已写入本地 {path}")
+                wrote_any = True
+            except Exception as local_exc:
+                err = f"本地写入失败: {local_exc}"
+                _cpa_log(err)
+                errors.append(err)
+        if remote_url:
+            try:
+                name = _cpa.upload_cpa_auth_remote(remote_url, management_key, record)
+                _cpa_log(f"已上传远程 {remote_url.rstrip('/')}/.../{name}")
+                wrote_any = True
+            except Exception as remote_exc:
+                err = f"远程上传失败: {remote_exc}"
+                _cpa_log(err)
+                errors.append(err)
+        if wrote_any:
+            return True, "ok"
+        return False, "; ".join(errors) if errors else "未写出任何目标"
+    except Exception as exc:
+        _cpa_log(f"上传异常: {exc}")
+        return False, str(exc)
 
 
 def create_browser_options():
@@ -1820,14 +1985,18 @@ class GrokRegisterGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Grok 注册机")
-        self.root.geometry("1120x900")
-        self.root.minsize(960, 700)
+        self.root.geometry("1120x980")
+        self.root.minsize(960, 780)
         self.is_running = False
+        self.is_sso_uploading = False
         self.batch_count = 0
         self.success_count = 0
         self.fail_count = 0
         self.results = []
         self.stop_requested = False
+        self.sso_upload_stop = False
+        self.sso_upload_success = 0
+        self.sso_upload_fail = 0
         self.ui_queue = queue.Queue()
         self.accounts_output_file = ""
         self.setup_ui()
@@ -1837,7 +2006,7 @@ class GrokRegisterGUI:
         main_frame = tk.Frame(self.root, bg=UI_BG, padx=10, pady=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
         main_frame.grid_columnconfigure(0, weight=1)
-        main_frame.grid_rowconfigure(3, weight=1)
+        main_frame.grid_rowconfigure(4, weight=1)
 
         config_frame = tk.LabelFrame(
             main_frame,
@@ -1952,8 +2121,58 @@ class GrokRegisterGUI:
         self.cpa_management_key_entry = tk_entry(config_frame, textvariable=self.cpa_management_key_var, width=28)
         add_field(self.cpa_management_key_entry, 7, 3)
 
+        sso_frame = tk.LabelFrame(
+            main_frame,
+            text="SSO → CPA 批量上传",
+            bg=UI_PANEL_BG,
+            fg=UI_FG,
+            padx=10,
+            pady=8,
+            relief=tk.GROOVE,
+            borderwidth=1,
+        )
+        sso_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 8))
+        sso_frame.grid_columnconfigure(0, weight=1)
+        tk_label(
+            sso_frame,
+            text="支持 JSON 数组 [\"eyJ...\", ...]；或每行一个 sso / sso=... / 邮箱----密码----sso（# 注释）",
+            bg=UI_PANEL_BG,
+            fg=UI_MUTED_FG,
+        ).grid(row=0, column=0, sticky=tk.W, pady=(0, 4))
+        self.sso_text = scrolledtext.ScrolledText(
+            sso_frame,
+            height=6,
+            width=60,
+            bg=UI_LOG_BG,
+            fg=UI_LOG_FG,
+            insertbackground=UI_LOG_FG,
+            selectbackground=UI_LOG_SELECT_BG,
+            selectforeground=UI_FG,
+            relief=tk.SOLID,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground=UI_BORDER,
+        )
+        self.sso_text.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
+        sso_btn_row = tk.Frame(sso_frame, bg=UI_PANEL_BG)
+        sso_btn_row.grid(row=2, column=0, sticky=tk.EW)
+        self.sso_import_btn = tk_button(sso_btn_row, text="从文件导入", command=self.import_sso_file)
+        self.sso_import_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.sso_clear_btn = tk_button(sso_btn_row, text="清空列表", command=self.clear_sso_text)
+        self.sso_clear_btn.pack(side=tk.LEFT, padx=5)
+        self.sso_upload_btn = tk_button(sso_btn_row, text="开始上传", command=self.start_sso_upload)
+        self.sso_upload_btn.pack(side=tk.LEFT, padx=5)
+        self.sso_stop_btn = tk_button(
+            sso_btn_row, text="停止上传", command=self.stop_sso_upload, state=tk.DISABLED
+        )
+        self.sso_stop_btn.pack(side=tk.LEFT, padx=5)
+        self.sso_stats_var = tk.StringVar(value="上传成功: 0 | 失败: 0 | 待处理: 0")
+        tk.Label(
+            sso_btn_row, textvariable=self.sso_stats_var, bg=UI_PANEL_BG, fg=UI_FG
+        ).pack(side=tk.RIGHT)
+
         btn_frame = tk.Frame(main_frame, bg=UI_BG)
-        btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(0, 6))
+        btn_frame.grid(row=2, column=0, sticky=tk.EW, pady=(0, 6))
         self.start_btn = tk_button(btn_frame, text="开始注册", command=self.start_registration)
         self.start_btn.pack(side=tk.LEFT, padx=5)
         self.stop_btn = tk_button(btn_frame, text="停止", command=self.stop_registration, state=tk.DISABLED)
@@ -1962,7 +2181,7 @@ class GrokRegisterGUI:
         self.clear_btn.pack(side=tk.LEFT, padx=5)
 
         status_frame = tk.Frame(main_frame, bg=UI_BG)
-        status_frame.grid(row=2, column=0, sticky=tk.EW, pady=(0, 6))
+        status_frame.grid(row=3, column=0, sticky=tk.EW, pady=(0, 6))
         self.status_var = tk.StringVar(value="就绪")
         tk_label(status_frame, text="状态: ").pack(side=tk.LEFT)
         self.status_label = tk.Label(
@@ -1981,7 +2200,7 @@ class GrokRegisterGUI:
             relief=tk.GROOVE,
             borderwidth=1,
         )
-        log_frame.grid(row=3, column=0, sticky=tk.NSEW)
+        log_frame.grid(row=4, column=0, sticky=tk.NSEW)
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
         self.log_text = scrolledtext.ScrolledText(
@@ -2015,21 +2234,201 @@ class GrokRegisterGUI:
     def update_stats(self):
         self.stats_var.set(f"成功: {self.success_count} | 失败: {self.fail_count}")
 
+    def update_sso_stats(self, pending=None):
+        if pending is None:
+            pending = 0
+        self.sso_stats_var.set(
+            f"上传成功: {self.sso_upload_success} | 失败: {self.sso_upload_fail} | 待处理: {pending}"
+        )
+
+    def _sync_cpa_config_from_ui(self):
+        config["proxy"] = self.proxy_var.get().strip()
+        config["cpa_auto_add"] = bool(self.cpa_auto_add_var.get())
+        config["cpa_auth_dir"] = self.cpa_auth_dir_var.get().strip()
+        config["cpa_remote_url"] = self.cpa_remote_url_var.get().strip()
+        config["cpa_management_key"] = self.cpa_management_key_var.get().strip()
+        save_config()
+
     def _set_running_ui(self, running):
         self.is_running = running
-        self.start_btn.config(state=tk.DISABLED if running else tk.NORMAL)
-        self.stop_btn.config(state=tk.NORMAL if running else tk.DISABLED)
-        self.status_var.set("运行中..." if running else "就绪")
-        self.status_label.config(
-            foreground=UI_STATUS_RUNNING if running else UI_STATUS_READY
+        self.start_btn.config(
+            state=tk.DISABLED if (running or self.is_sso_uploading) else tk.NORMAL
         )
+        self.stop_btn.config(state=tk.NORMAL if running else tk.DISABLED)
+        if running:
+            self.status_var.set("运行中...")
+            self.status_label.config(foreground=UI_STATUS_RUNNING)
+        elif self.is_sso_uploading:
+            self.status_var.set("SSO 上传中...")
+            self.status_label.config(foreground=UI_STATUS_RUNNING)
+        else:
+            self.status_var.set("就绪")
+            self.status_label.config(foreground=UI_STATUS_READY)
+        self._refresh_sso_upload_buttons()
+
+    def _set_sso_uploading_ui(self, uploading):
+        self.is_sso_uploading = uploading
+        self._refresh_sso_upload_buttons()
+        if uploading:
+            self.status_var.set("SSO 上传中...")
+            self.status_label.config(foreground=UI_STATUS_RUNNING)
+            self.start_btn.config(state=tk.DISABLED)
+        elif not self.is_running:
+            self.status_var.set("就绪")
+            self.status_label.config(foreground=UI_STATUS_READY)
+            self.start_btn.config(state=tk.NORMAL)
+        else:
+            self.start_btn.config(state=tk.DISABLED)
+
+    def _refresh_sso_upload_buttons(self):
+        busy = self.is_running or self.is_sso_uploading
+        if hasattr(self, "sso_upload_btn"):
+            self.sso_upload_btn.config(
+                state=tk.DISABLED if busy else tk.NORMAL
+            )
+            self.sso_stop_btn.config(
+                state=tk.NORMAL if self.is_sso_uploading else tk.DISABLED
+            )
+            self.sso_import_btn.config(
+                state=tk.DISABLED if self.is_sso_uploading else tk.NORMAL
+            )
+            self.sso_clear_btn.config(
+                state=tk.DISABLED if self.is_sso_uploading else tk.NORMAL
+            )
 
     def should_stop(self):
         return self.stop_requested or not self.is_running
 
+    def should_stop_sso_upload(self):
+        return self.sso_upload_stop or not self.is_sso_uploading
+
+    def import_sso_file(self):
+        if self.is_sso_uploading:
+            self.log("[CPA上传] 上传进行中，无法导入文件")
+            return
+        path = filedialog.askopenfilename(
+            title="选择 SSO 列表文件",
+            filetypes=[
+                ("文本文件", "*.txt"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.sso_text.delete("1.0", tk.END)
+            self.sso_text.insert("1.0", content)
+            items = parse_sso_lines(content)
+            self.update_sso_stats(pending=len(items))
+            self.log(f"[CPA上传] 已导入文件: {path}（解析到 {len(items)} 条）")
+        except Exception as exc:
+            self.log(f"[CPA上传] 导入失败: {exc}")
+
+    def clear_sso_text(self):
+        if self.is_sso_uploading:
+            self.log("[CPA上传] 上传进行中，无法清空列表")
+            return
+        self.sso_text.delete("1.0", tk.END)
+        self.sso_upload_success = 0
+        self.sso_upload_fail = 0
+        self.update_sso_stats(pending=0)
+
+    def start_sso_upload(self):
+        if self.is_running:
+            self.log("[CPA上传] 注册任务进行中，请先停止注册")
+            return
+        if self.is_sso_uploading:
+            self.log("[CPA上传] 已有上传任务在运行")
+            return
+
+        self._sync_cpa_config_from_ui()
+        auth_dir = str(config.get("cpa_auth_dir", "") or "").strip()
+        remote_url = str(config.get("cpa_remote_url", "") or "").strip()
+        management_key = str(config.get("cpa_management_key", "") or "").strip()
+        if remote_url and not management_key:
+            self.log("[CPA上传] 已填远程地址但未填管理密钥")
+            return
+        if not auth_dir and not (remote_url and management_key):
+            self.log("[CPA上传] 请先配置 CPA auth 目录 或 远程地址+管理密钥")
+            return
+
+        raw = self.sso_text.get("1.0", tk.END)
+        items = parse_sso_lines(raw)
+        if not items:
+            self.log("[CPA上传] 列表为空，请粘贴 SSO 或从文件导入")
+            return
+
+        self.sso_upload_stop = False
+        self.sso_upload_success = 0
+        self.sso_upload_fail = 0
+        self.update_sso_stats(pending=len(items))
+        self._set_sso_uploading_ui(True)
+        self.log(f"[CPA上传] 开始批量上传，共 {len(items)} 条")
+        if auth_dir:
+            self.log(f"[CPA上传] 本地目标: {auth_dir}")
+        if remote_url:
+            self.log(f"[CPA上传] 远程目标: {remote_url}")
+        threading.Thread(
+            target=self.run_sso_upload,
+            args=(items,),
+            daemon=True,
+        ).start()
+
+    def stop_sso_upload(self):
+        if not self.is_sso_uploading:
+            return
+        self.sso_upload_stop = True
+        self.log("[CPA上传] 用户请求停止上传")
+
+    def run_sso_upload(self, items):
+        total = len(items)
+        try:
+            for idx, item in enumerate(items, 1):
+                if self.should_stop_sso_upload():
+                    self.log("[CPA上传] 已停止")
+                    break
+                email = item.get("email") or ""
+                sso = item.get("sso") or ""
+                label = email or (sso[:18] + "..." if len(sso) > 18 else sso)
+                remaining = total - idx + 1
+                self.root.after(0, lambda r=remaining - 1: self.update_sso_stats(pending=r))
+                self.log(f"[CPA上传] ({idx}/{total}) 处理: {label}")
+                ok, msg = upload_sso_item_to_cpa(
+                    sso,
+                    email=email,
+                    log_callback=self.log,
+                    require_target=True,
+                )
+                if ok:
+                    self.sso_upload_success += 1
+                    self.log(f"[CPA上传] (+) 成功: {label}")
+                else:
+                    self.sso_upload_fail += 1
+                    self.log(f"[CPA上传] (-) 失败: {label} | {msg}")
+                self.root.after(
+                    0,
+                    lambda r=max(total - idx, 0): self.update_sso_stats(pending=r),
+                )
+        except Exception as exc:
+            self.log(f"[CPA上传] 任务异常: {exc}")
+        finally:
+            def _finish():
+                self._set_sso_uploading_ui(False)
+                self.update_sso_stats(pending=0)
+                self.log(
+                    f"[CPA上传] 任务结束。成功 {self.sso_upload_success} | 失败 {self.sso_upload_fail}"
+                )
+
+            self.root.after(0, _finish)
+
     def start_registration(self):
         if self.is_running:
             self.log("[!] 当前已有任务在运行")
+            return
+        if self.is_sso_uploading:
+            self.log("[!] SSO 上传进行中，请先停止上传")
             return
 
         config["email_provider"] = self.email_provider_var.get().strip() or "duckmail"
